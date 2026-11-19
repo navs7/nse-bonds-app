@@ -13,7 +13,7 @@ def data_notes(terms: BondTerms) -> list[str]:
     if terms.coupon_rate > 0 and not terms.coupon_freq:
         notes.append("coupon frequency unknown: yield not computed")
     if terms.paid_up_value is not None and terms.paid_up_value != terms.face_value:
-        notes.append(f"paid-up {terms.paid_up_value:g} differs from face {terms.face_value:g}: "
+        notes.append(f"paid-up {terms.paid_up_value:,.2f} differs from face {terms.face_value:,.2f}: "
                      "verify outstanding value with depository; yield not computed")
     return notes
 
