@@ -58,6 +58,18 @@ def _pv(flows: list[CashFlow], settle: date, r: float) -> float:
     return sum(cf / (1 + r) ** ((d - settle).days / 365) for d, cf in flows)
 
 
+def total_gain(terms: BondTerms, clean_price: float, settle: Optional[date] = None) -> Optional[float]:
+    """Undiscounted gain per bond if bought at clean_price and held to maturity:
+    all remaining coupons + principal - (price + accrued interest)."""
+    settle = settle or date.today() + timedelta(days=1)
+    if clean_price <= 0 or terms.maturity_date <= settle:
+        return None
+    if terms.coupon_rate > 0 and not terms.coupon_freq:
+        return None
+    flows, accrued = cashflows(terms, settle)
+    return sum(cf for _, cf in flows) - (clean_price + accrued)
+
+
 def ytm(terms: BondTerms, clean_price: float, settle: Optional[date] = None) -> Optional[float]:
     """Yield to maturity in percent for a CLEAN price quoted per bond (same unit as face_value)."""
     settle = settle or date.today() + timedelta(days=1)

@@ -71,6 +71,16 @@ python -m app.sources.nse_universe            # builds data\bonds.csv from NSE f
 Open http://127.0.0.1:8000. API: `/api/bonds`, `/api/bonds/{isin}`, `/api/health`.
 Tests: `.venv\Scripts\python -m pytest`.
 
+## Screening signal (from the old Excel macro)
+
+On a **LIVE** quote, using the best ask: `INVEST` = YTM >= 12%, more than 90 days left, and gross profit > 10,000;
+`REVIEW` = same but profit <= 10,000; `LOW_YTM`, `SHORT` (<= 90 days) otherwise; `CHECK` = yield above 50%, which
+usually means a price or face-value problem, not a bargain. Gross profit = (remaining coupons + principal - price -
+accrued) x best-ask quantity. Stale or missing quotes never get a signal. Thresholds: `MIN_YTM`, `MIN_DAYS_LEFT`,
+`MIN_GROSS_PROFIT` in `.env`.
+
+API: `/api/bonds?signal=INVEST,REVIEW&sort=ytm` (also `min_ytm`, `min_days`). The page has a "Screen" checkbox for this.
+
 ## Yield convention
 
 Annual effective yield, actual/365, dirty = clean + accrued, bullet repayment. Partially redeemed

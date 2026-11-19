@@ -61,3 +61,6 @@ class BondView(BaseModel):
     ytm_best_ask: Optional[float] = None
     ytm_best_bid: Optional[float] = None
     notes: list[str] = []  # why a value is missing, e.g. unknown coupon frequency
+    days_left: Optional[int] = None
+    gross_profit: Optional[float] = None  # undiscounted gain per unit x quantity at best ask
+    signal: Optional[str] = None  # INVEST | REVIEW | LOW_YTM | SHORT | CHECK (LIVE quotes only)

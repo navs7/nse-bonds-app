@@ -48,3 +48,39 @@ def test_status_no_quote_live_and_stale():
     assert build_view(t, old, NOW, 300).status == "STALE"
     nodepth = Quote(isin=t.isin, ltp=1000, received_at=NOW)
     assert build_view(t, nodepth, NOW, 300).status == "STALE"
+
+
+# ---- signal rules (12% YTM / 90+ days / 10,000 profit, as in the old Excel macro) ----
+from app.service import Rules, classify  # noqa: E402
+
+R = Rules()
+
+
+def test_classify_rules():
+    assert classify(None, 500, 1e6, R) is None
+    assert classify(13.0, 500, 20_000, R) == "INVEST"
+    assert classify(13.0, 500, 5_000, R) == "REVIEW"
+    assert classify(13.0, 500, 10_000, R) == "REVIEW"  # must EXCEED 10,000
+    assert classify(11.9, 500, 1e6, R) == "LOW_YTM"
+    assert classify(13.0, 90, 1e6, R) == "SHORT"  # needs MORE than 90 days
+    assert classify(80.0, 500, 1e6, R) == "CHECK"  # implausible yield = suspect data
+
+
+def _live_view(price, qty, recv_age=10, **tkw):
+    t = terms(maturity_date=date(2029, 1, 1), **tkw)
+    q = Quote(isin=t.isin, ltp=price, asks=[Level(price=price, qty=qty)],
+              received_at=NOW - timedelta(seconds=recv_age))
+    return build_view(t, q, NOW, 300, R)
+
+
+def test_view_gets_signal_and_profit_only_when_live():
+    v = _live_view(800.0, 100)  # 10% coupon bond bought well below par -> high yield
+    assert v.status == "LIVE" and v.days_left > 90 and v.ytm_best_ask > 12
+    assert v.gross_profit > 10_000 and v.signal == "INVEST"
+    stale = _live_view(800.0, 100, recv_age=900)
+    assert stale.status == "STALE" and stale.signal is None  # stale price never says Invest
+
+
+def test_no_signal_without_frequency():
+    v = _live_view(800.0, 100, coupon_freq=None)
+    assert v.signal is None and v.gross_profit is None
