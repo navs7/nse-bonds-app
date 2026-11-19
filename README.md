@@ -34,6 +34,11 @@ The paid WDM `DLYddmmyyyy.zip` bhavcopy is vendor-SFTP-only and is not used.
 **What NSE does not give us, and what the app does about it:**
 - *Coupon frequency, rating* are blank. Add them in `data/overrides.csv` (`isin,coupon_freq,rating,face_value`).
   Until a coupon bond has a frequency, **yield is not computed** (it shows a note) rather than guessed.
+  To fill them in bulk: download NSE's current **Interest Payment Details (.csv)** from the
+  "Securities available for Trading" page on nseindia.com (a normal browser download; it holds issuer-filed frequencies),
+  save it in `data/`, then run `.venv\Scripts\python -m app.sources.frequency_import data\<that file>.csv` and rerun the
+  universe import. Existing overrides are kept; disagreements are printed. The copies on NSE's archive host are
+  2022-2023 snapshots and cover almost no current bonds.
 - *Paid-up value differs from face value* (e.g. 94 bonds in the Nov 2026 file): yield is withheld with a note until
   you verify the outstanding value with NSDL/CDSL. Fix it via `face_value` in overrides.
 - Bhavcopy prices are end-of-day references, not live; only bonds that traded that day have one (123 of 1,667 corporate
