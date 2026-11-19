@@ -14,13 +14,14 @@
  th.l,td.l{text-align:left}
  .f{width:100%;min-width:62px;box-sizing:border-box;font:12px system-ui,sans-serif;padding:2px 4px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:3px}
  .f.bad{border-color:var(--err);outline:1px solid var(--err)}
+ tr.pu td{background:rgba(255,190,0,.22)}
  .INVEST{color:var(--ok);font-weight:700} .REVIEW{color:var(--warn)} .CHECK{color:var(--err)} .LIVE{color:var(--ok)} .STALE{color:var(--warn)} .NO_QUOTE{color:var(--bad)}
  small,#count{color:var(--mut)} button{font:12px system-ui,sans-serif}
 </style></head><body>
 <h1>NSE Bonds</h1>
 <p><small>Terms: NSE listing files (coupon frequency and rating from manual overrides). Quotes: Upstox stream (broker feed, not an official exchange feed). Yield is computed here from price, coupon, maturity and face value.</small></p>
 <div class="bar">
- <label>Exchange <select id="exch"><option value="">All</option><option>NSE</option><option>BSE</option></select></label>
+ <label>Exchange <select id="exch"><option value="">All</option><option>NSE</option><option>BSE</option><option>WDM</option></select></label>
  <label><input type="checkbox" id="conf"> Only terms conflicts (sources disagree)</label>
  <label><input type="checkbox" id="screen"> Screen: Invest / Review only (YTM at ask &ge; 12%, more than 90 days left), highest yield first</label>
 </div>
@@ -42,13 +43,17 @@ const cols=[
  {h:"Status",t:"set",v:b=>b.status,cls:b=>b.status},
  {h:"Signal",t:"set",v:b=>b.signal||"-",cls:b=>b.signal||""},
  {h:"LTP",t:"num",v:b=>num(b.quote&&b.quote.ltp),show:v=>f(v)},
- {h:"NSE close",t:"num",v:b=>num(b.terms.ref_close),show:v=>f(v)},
+ {h:"Close / last",t:"num",v:b=>num(b.terms.ref_close),show:v=>f(v)},
+ {h:"Close date",t:"text",v:b=>b.terms.ref_date||"-"},
  {h:"Best bid",t:"num",v:b=>num(bid1(b)),show:v=>f(v)},
  {h:"Best ask",t:"num",v:b=>num(ask1(b)),show:v=>f(v)},
  {h:"YTM @ask",t:"num",v:b=>num(b.ytm_best_ask),show:pct},
  {h:"YTM @LTP",t:"num",v:b=>num(b.ytm_ltp),show:pct},
+ {h:"YTM @close",t:"num",v:b=>num(b.ytm_ref),show:pct},
  {h:"Profit",t:"num",v:b=>num(b.gross_profit),show:v=>f(v,0)},
  {h:"Days",t:"num",v:b=>num(b.days_left),show:v=>v==null?"-":v},
+ {h:"Face",t:"num",v:b=>num(b.terms.face_value),show:v=>f(v,0)},
+ {h:"Paid-up",t:"num",v:b=>num(b.terms.paid_up_value),show:v=>f(v,2)},
  {h:"Quote age",t:"num",v:b=>num(b.age_seconds),show:age},
  {h:"Terms source",t:"text",v:b=>(b.terms.terms_source||"-")+(b.terms.terms_as_of?" ("+b.terms.terms_as_of+")":"")},
  {h:"Notes",t:"text",v:b=>(b.notes||[]).join("; "),cls:b=>b.terms.terms_conflict?"CHECK":""},
@@ -89,6 +94,8 @@ function render(){
   const shown=data.filter(passes), tb=document.getElementById("rows"), frag=document.createDocumentFragment();
   for(const b of shown){
     const tr=document.createElement("tr");
+    const pu=b.terms.paid_up_value, fv=b.terms.face_value;
+    if(pu!=null&&fv!=null&&pu!==fv) tr.className="pu";   // paid-up differs from face value
     cols.forEach((c,i)=>{
       const td=document.createElement("td"), v=c.v(b);
       td.textContent=c.show?c.show(v):v;

@@ -26,6 +26,10 @@ DEBT_URL = "https://nsearchives.nseindia.com/content/equities/DEBT.csv"
 BHAV_URL = "https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{ymd}_F_0000.csv.zip"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
+# coupon-frequency labels used by NSE files -> payments per year ("0"/blank = no periodic coupon: not mapped)
+FREQ = {"yearly": 1, "annual": 1, "annually": 1, "half yearly": 2, "half-yearly": 2,
+        "quarterly": 4, "monthly": 12, "1": 1, "2": 2, "4": 4, "12": 12}
+
 ISIN_RE = re.compile(r"^IN[A-Z0-9]{10}$")
 MONTHS = {m: i for i, m in enumerate(
     ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], 1)}
@@ -144,7 +148,18 @@ def build_rows(master: Iterable[dict], bhav: dict[str, dict], overrides: dict[st
     return sorted(rows, key=lambda r: (r["category"], r["name"], r["maturity_date"]))
 
 
+def assert_unique_isins(rows: list[dict]) -> None:
+    """A duplicate ISIN would be silently merged by the loader (last row wins), so refuse to write one."""
+    seen: dict[str, int] = {}
+    for r in rows:
+        seen[r["isin"]] = seen.get(r["isin"], 0) + 1
+    dups = sorted(i for i, n in seen.items() if n > 1)
+    if dups:
+        raise ValueError(f"{len(dups)} duplicate ISIN(s) in the universe, e.g. {dups[:5]}")
+
+
 def write_csv(rows: list[dict], path: Path) -> None:
+    assert_unique_isins(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=OUT_FIELDS)
@@ -172,7 +187,11 @@ def add_bse(rows: list[dict], overrides: dict, today: date) -> list[dict]:
         raw = c.get(bu.UPSTOX_BSE_URL)
         raw.raise_for_status()
         instruments, skipped = bu.parse_instruments(raw.content)
-        bse_bhav = bu.fetch_latest_bse_bhavcopy(c, today)
+        try:
+            bse_bhav = bu.fetch_latest_bse_bhavcopy(c, today)
+        except (RuntimeError, httpx.HTTPError) as e:  # prices are a bonus: never lose the universe over them
+            print(f"WARNING: BSE prices unavailable this run ({e}); BSE bonds will have no close price. Rerun later to add them.")
+            bse_bhav = {}
     nse_terms = {r["isin"]: r for r in rows}
     agree, total = bu.agreement_with_nse(instruments, nse_terms)
     new_rows, stats = bu.build_rows(instruments, bse_bhav, overrides, set(nse_terms), today)
@@ -185,6 +204,23 @@ def add_bse(rows: list[dict], overrides: dict, today: date) -> list[dict]:
     return rows + new_rows
 
 
+def add_wdm(rows: list[dict], overrides: dict, today: date, path: Optional[Path]) -> list[dict]:
+    """Append corporate bonds that only NSE's wholesale-debt list has. Needs the user's downloaded wdmlist file."""
+    from . import wdm_universe as wu
+
+    path = path or wu.find_wdmlist(Path("."), Path("data"))
+    if path is None:
+        print("WDM: no wdmlist_*.csv found (download NSE's WDM list into this folder or data/) - skipping WDM-only bonds")
+        return rows
+    parsed, skipped = wu.parse_wdmlist(path.read_text(encoding="utf-8-sig", errors="replace"), today)
+    new = wu.build_rows(parsed, overrides, {r["isin"] for r in rows}, wu.asof_from_filename(path.name),
+                        f"NSE WDM list {path.name}")
+    priced = sum(1 for r in new if r["ref_close"] != "")
+    print(f"WDM ({path.name}): {len(parsed)} live corporate bonds, {len(parsed) - len(new)} already in the list -> "
+          f"{len(new)} WDM-only added ({priced} with a last-traded price, the rest never traded); skipped: {skipped}")
+    return rows + new
+
+
 def main() -> None:
     import httpx
 
@@ -194,6 +230,8 @@ def main() -> None:
     ap.add_argument("--overrides", default="data/overrides.csv")
     ap.add_argument("--conflicts", default="data/term_conflicts.csv")
     ap.add_argument("--no-bse", action="store_true", help="skip the BSE universe")
+    ap.add_argument("--wdmlist", default=None, help="NSE WDM list CSV (default: newest wdmlist_*.csv in . or data/)")
+    ap.add_argument("--no-wdm", action="store_true", help="skip WDM-only bonds")
     a = ap.parse_args()
     today = date.today()
     with httpx.Client(headers=HEADERS, timeout=60, follow_redirects=True) as c:
@@ -206,6 +244,8 @@ def main() -> None:
     rows = build_rows(master, bhav, overrides, cats, today)
     if not a.no_bse and "corporate" in cats:
         rows = add_bse(rows, overrides, today)
+    if not a.no_wdm and "corporate" in cats:
+        rows = add_wdm(rows, overrides, today, Path(a.wdmlist) if a.wdmlist else None)
     conflicts = load_conflicts(Path(a.conflicts))
     for r in rows:
         r["terms_conflict"] = conflicts.get(r["isin"], "")

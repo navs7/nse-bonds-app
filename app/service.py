@@ -59,13 +59,38 @@ def data_notes(terms: BondTerms) -> list[str]:
     return notes
 
 
+NEG_NOTE = ("price implies a negative yield (price above everything the bond still pays): terms, face value, "
+            "redemption amount or price convention look wrong; yield not shown")
+
+
+def non_negative(y: Optional[float]) -> tuple[Optional[float], bool]:
+    """INR corporate bonds do not yield below zero: a negative result means bad inputs, so drop it (and say so)."""
+    return (None, True) if (y is not None and y < 0) else (y, False)
+
+
+def ref_yield(terms: BondTerms, today: date, max_age_days: int) -> tuple[Optional[float], Optional[str]]:
+    """(yield at last close/trade, note). Only when the price is recent: an old trade says little about today."""
+    if terms.ref_close is None or terms.ref_close <= 0 or yield_blocked(terms):
+        return None, None
+    if terms.ref_date is None:
+        return None, "last close/trade has no date: reference yield not shown"
+    age = (today - terms.ref_date).days
+    if age > max_age_days:
+        return None, f"last close/trade is {age} days old: reference yield not shown"
+    y, negative = non_negative(yieldcalc.ytm(terms, terms.ref_close, today + timedelta(days=1)))
+    return y, (NEG_NOTE if negative else None)
+
+
 def build_view(terms: BondTerms, quote: Optional[Quote], now: datetime, stale_after: int,
-               rules: Rules = Rules()) -> BondView:
+               rules: Rules = Rules(), ref_max_age_days: int = 30) -> BondView:
     notes = data_notes(terms)
     today = now.date()
+    ytm_ref, ref_note = ref_yield(terms, today, ref_max_age_days)
+    if ref_note:
+        notes.append(ref_note)
     days_left = (terms.maturity_date - today).days
     if quote is None or (quote.ltp is None and not quote.asks and not quote.bids):
-        return BondView(terms=terms, quote=quote, status="NO_QUOTE", days_left=days_left, notes=notes)
+        return BondView(terms=terms, quote=quote, status="NO_QUOTE", days_left=days_left, notes=notes, ytm_ref=ytm_ref)
     # age = time since last trade (informational); status uses time since we last heard from the feed
     ref = quote.last_trade_time or quote.received_at
     age = (now - ref).total_seconds()
@@ -76,21 +101,25 @@ def build_view(terms: BondTerms, quote: Optional[Quote], now: datetime, stale_af
     best_ask = quote.asks[0] if quote.asks else None
     best_bid = quote.bids[0] if quote.bids else None
     base = dict(terms=terms, quote=quote, status=status, age_seconds=round(age, 1),
-                days_left=days_left, notes=notes)
+                days_left=days_left, notes=notes, ytm_ref=ytm_ref)
     if yield_blocked(terms):
         return BondView(**base)
 
     settle = today + timedelta(days=1)
-    ytm_ask = yieldcalc.ytm(terms, best_ask.price, settle) if best_ask else None
+    ytm_ask, n1 = non_negative(yieldcalc.ytm(terms, best_ask.price, settle) if best_ask else None)
+    ytm_ltp, n2 = non_negative(yieldcalc.ytm(terms, quote.ltp, settle) if quote.ltp else None)
+    ytm_bid, n3 = non_negative(yieldcalc.ytm(terms, best_bid.price, settle) if best_bid else None)
+    if (n1 or n2 or n3) and NEG_NOTE not in notes:
+        notes.append(NEG_NOTE)
     gain = yieldcalc.total_gain(terms, best_ask.price, settle) if best_ask else None
     profit = round(gain * best_ask.qty, 2) if (gain is not None and best_ask) else None
     # A signal is only given on a LIVE quote: a stale price must never say "Invest".
     signal = classify(ytm_ask, days_left, profit, rules) if status == "LIVE" else None
     return BondView(
         **base,
-        ytm_ltp=yieldcalc.ytm(terms, quote.ltp, settle) if quote.ltp else None,
+        ytm_ltp=ytm_ltp,
         ytm_best_ask=ytm_ask,
-        ytm_best_bid=yieldcalc.ytm(terms, best_bid.price, settle) if best_bid else None,
+        ytm_best_bid=ytm_bid,
         gross_profit=profit,
         signal=signal,
     )

@@ -1,20 +1,21 @@
-"""Fill coupon_freq in data/overrides.csv from NSE files that carry it. Two formats are recognised:
+"""Fill coupon_freq in data/overrides.csv from NSE files that carry it. Formats recognised:
 
-  * NSE "WDM list" (wdmlist_DDMMYYYY.csv: SECTYPE, ISSUE_NAME, MAT_DATE, Cpn Freq, ISIN NO., ...), a current
-    listing of NSE debt with coupon frequency. Each ISIN's coupon and maturity are cross-checked against
-    data/bonds.csv; if they disagree the ISIN is skipped (probably not the same instrument).
-  * NSE "Interest Payment Details" CSV, below.
+  * NSE "WDM list" (wdmlist_DDMMYYYY.csv: SECTYPE, ISSUE_NAME, MAT_DATE, Cpn Freq, ISIN NO., ...) and
+  * NSE "Corporate bond report" (Corporate_bond_report_DD-Mon-YYYY.csv: Issue Name, Maturity Date,
+    Coupon Frequency, ISIN, ... with title lines above the header), both from nseindia.com/all-reports-debt.
+    Each ISIN's coupon and maturity are cross-checked against data/bonds.csv; if they disagree the ISIN is
+    skipped and recorded as a terms conflict (probably not the same instrument, or one source is wrong).
+  * NSE "Interest Payment Details" CSV, below (optional; not one of the files normally used).
 
 The interest-payment file is the issuers' own regulatory filings (field "Frequency"), published by NSE on the
 "Securities available for Trading" page as "Interest Payment Details (.csv)". Download the CURRENT
-version yourself (it is a normal browser download) and put it in data/. The copies on the NSE archive
-host that are reachable by script are old (2022-2023) snapshots and cover almost none of today's bonds.
+version yourself (it is a normal browser download) and put it in data/.
 
-    python -m app.sources.frequency_import data/wdmlist_18112026.csv [data/Interest_Payment_Details.csv] [--replace]
+    python -m app.sources.frequency_import wdmlist_18112026.csv Corporate_bond_report_18-Nov-2026.csv [--replace]
 
 Rules (never guess):
   * only ISINs in data/bonds.csv with a coupon > 0 are considered
-  * per ISIN the filing with the latest Reporting Date wins; if the latest date has conflicting
+  * per ISIN the filing with the latest date wins; if the latest date has conflicting
     frequencies the ISIN is skipped and reported
   * Yearly=1, Half Yearly=2, Quarterly=4, Monthly=12; "Others", "0" (no periodic coupon) and blanks are skipped
   * existing overrides are kept unless --replace is given; disagreements are reported
@@ -29,10 +30,9 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from .nse_universe import MONTHS
+from .nse_universe import FREQ, MONTHS
+from .wdm_universe import asof_from_filename  # noqa: F401  (re-exported)
 
-FREQ = {"yearly": 1, "annual": 1, "annually": 1, "half yearly": 2, "half-yearly": 2,
-        "quarterly": 4, "monthly": 12, "1": 1, "2": 2, "4": 4, "12": 12}
 OVERRIDE_FIELDS = ["isin", "coupon_freq", "rating", "face_value", "terms_verified"]
 
 
@@ -49,7 +49,7 @@ def read_filings(text: str) -> dict[str, tuple[Optional[date], set[int]]]:
     """isin -> (latest reporting date, set of frequencies filed on that date)."""
     rd = csv.DictReader(io.StringIO(text.lstrip("﻿")))
     if not {"ISIN", "Reporting Date", "Frequency"} <= set(rd.fieldnames or []):
-        raise ValueError(f"Not an Interest Payment Details file; columns: {rd.fieldnames}")
+        raise ValueError(f"Not an NSE Interest Payment Details file; columns: {rd.fieldnames}")
     best: dict[str, tuple[Optional[date], set[int]]] = {}
     for r in rd:
         isin = r["ISIN"].strip().upper()
@@ -65,55 +65,68 @@ def read_filings(text: str) -> dict[str, tuple[Optional[date], set[int]]]:
     return best
 
 
+# column layouts of the NSE lists (from nseindia.com/all-reports-debt) that carry coupon frequency
+SCHEMAS = [
+    {"label": "NSE WDM list", "isin": "ISIN NO.", "freq": "Cpn Freq", "mat": "MAT_DATE", "coupon": "ISSUE_NAME"},
+    {"label": "NSE corporate bond report", "isin": "ISIN", "freq": "Coupon Frequency", "mat": "Maturity Date",
+     "coupon": "Issue Name"},
+]
+
+
+def detect_schema(text: str):
+    """(schema, csv text starting at its header row) or None. The corporate report has title lines above the header."""
+    lines = text.lstrip("\ufeff").splitlines()
+    for i, line in enumerate(lines[:25]):
+        head = {h.strip() for h in next(csv.reader([line]), [])}
+        for sc in SCHEMAS:
+            if {sc["isin"], sc["freq"], sc["mat"], sc["coupon"]} <= head:
+                return sc, "\n".join(lines[i:])
+    return None
+
+
 def is_wdmlist(text: str) -> bool:
-    head = next(csv.reader(io.StringIO(text.lstrip("﻿"))), [])
-    return {"ISIN NO.", "Cpn Freq", "MAT_DATE", "ISSUE_NAME"} <= {h.strip() for h in head}
-
-
-def asof_from_filename(name: str) -> date:
-    """wdmlist_18112026.csv -> 2026-11-18; falls back to today."""
-    m = re.search(r"(\d{2})(\d{2})(\d{4})", name)
-    try:
-        return date(int(m[3]), int(m[2]), int(m[1])) if m else date.today()
-    except ValueError:
-        return date.today()
+    return detect_schema(text) is not None
 
 
 def read_wdmlist(text: str, asof: date):
-    """-> (isin -> (asof, {frequencies}), isin -> (coupon %, maturity) for cross-checking)."""
-    rd = csv.DictReader(io.StringIO(text.lstrip("﻿")))
+    """-> (isin -> (asof, {frequencies}), isin -> (coupon %, maturity, source label) for cross-checking)."""
+    found = detect_schema(text)
+    if found is None:
+        raise ValueError("Not an NSE WDM list or corporate bond report")
+    sc, body = found
+    rd = csv.DictReader(io.StringIO(body))
     freqs: dict[str, tuple[date, set[int]]] = {}
-    terms: dict[str, tuple[Optional[float], Optional[date]]] = {}
+    terms: dict[str, tuple[Optional[float], Optional[date], str]] = {}
     for r in rd:
-        isin = (r.get("ISIN NO.") or "").strip().upper()
-        f = FREQ.get((r.get("Cpn Freq") or "").strip().lower())
+        isin = (r.get(sc["isin"]) or "").strip().upper()
+        f = FREQ.get((r.get(sc["freq"]) or "").strip().lower())
         if not isin or f is None:
             continue
         freqs.setdefault(isin, (asof, set()))[1].add(f)
-        m = re.match(r"\s*(\d+(?:\.\d+)?)\s*%", r.get("ISSUE_NAME") or "")
-        terms[isin] = (float(m[1]) if m else None, _date(r.get("MAT_DATE") or ""))
+        m = re.match(r"\s*(\d+(?:\.\d+)?)\s*%?\s*$", r.get(sc["coupon"]) or "")  # "8.72%" or a bare "8.0956"
+        terms[isin] = (float(m[1]) if m else None, _date(r.get(sc["mat"]) or ""), sc["label"])
     return freqs, terms
 
 
 def terms_mismatches(terms: dict, bonds: dict[str, dict]) -> set[str]:
-    """ISINs whose coupon or maturity in the WDM list contradict what we hold (skip those)."""
+    """ISINs whose coupon or maturity in an NSE list contradict what we hold (skip those)."""
     bad = set()
-    for isin, (coupon, mat) in terms.items():
+    for isin, (coupon, mat, _label) in terms.items():
         b = bonds.get(isin)
         if not b:
             continue
         if mat is not None and mat.isoformat() != b["maturity_date"]:
             bad.add(isin)
-        # DEBT.csv rounds coupons to 2 decimals (7.685% -> 7.69%), so allow half a rounding unit
-        elif coupon is not None and abs(coupon - float(b["coupon_rate"] or 0)) > 0.0051:
+        # DEBT.csv rounds OR truncates coupons to 2 decimals (7.685% -> 7.69%, 8.0956% -> 8.09%): allow 0.01
+        elif coupon is not None and abs(coupon - float(b["coupon_rate"] or 0)) > 0.0101:
             bad.add(isin)
     return bad
 
 
 def conflict_detail(isin: str, wdm_terms: dict, bonds: dict[str, dict]) -> str:
-    c, m = wdm_terms[isin]
+    c, m, label = wdm_terms[isin]
     b = bonds[isin]
-    return (f"NSE WDM list says {c if c is not None else '?'}% maturing {m or '?'}; "
+    return (f"{label} says {c if c is not None else '?'}% maturing {m or '?'}; "
             f"{b.get('terms_source') or 'our data'} says {b['coupon_rate']}% maturing {b['maturity_date']}")
 
 

@@ -33,6 +33,11 @@ class BondTerms(BaseModel):
     terms_conflict: str = ""  # non-empty = two sources disagree on this bond's coupon/maturity
 
     @property
+    def streamable(self) -> bool:
+        """Upstox streams NSE/BSE capital-market scrips only (not WDM), and unverified BSE bonds get no yield anyway."""
+        return self.exchange in ("NSE", "BSE") and (self.exchange == "NSE" or self.terms_verified)
+
+    @property
     def instrument_key(self) -> str:
         return f"{self.exchange}_EQ|{self.isin}"
 
@@ -64,6 +69,7 @@ class BondView(BaseModel):
     ytm_ltp: Optional[float] = None  # percent
     ytm_best_ask: Optional[float] = None
     ytm_best_bid: Optional[float] = None
+    ytm_ref: Optional[float] = None  # yield at the last close/trade price, only if that price is recent
     notes: list[str] = []  # why a value is missing, e.g. unknown coupon frequency
     days_left: Optional[int] = None
     gross_profit: Optional[float] = None  # undiscounted gain per unit x quantity at best ask

@@ -23,8 +23,8 @@ async def lifespan(app: FastAPI):
     state["terms"] = load_terms(config.BONDS_CSV)
     log.info("loaded %d bonds from %s", len(state["terms"]), config.BONDS_CSV)
     if config.UPSTOX_ACCESS_TOKEN and state["terms"]:
-        # Unverified BSE-only bonds get no yield, so streaming them would only burn the subscription limit.
-        keys = [t.instrument_key for t in state["terms"].values() if t.exchange == "NSE" or t.terms_verified]
+        # Only NSE/BSE capital-market bonds with verified terms: WDM is not streamed and unverified BSE gets no yield.
+        keys = [t.instrument_key for t in state["terms"].values() if t.streamable]
         log.info("streaming %d of %d bonds", len(keys), len(state["terms"]))
         live = UpstoxLive(config.UPSTOX_ACCESS_TOKEN, keys)
         live.start()
@@ -62,7 +62,8 @@ def bonds(
 ):
     quotes, now = _quotes(), utcnow()
     views = [
-        build_view(t, quotes.get(isin), now, config.QUOTE_STALE_AFTER_SECONDS, RULES)
+        build_view(t, quotes.get(isin), now, config.QUOTE_STALE_AFTER_SECONDS, RULES,
+                   config.REF_MAX_AGE_DAYS)
         for isin, t in state["terms"].items()
     ]
     if exchange:
@@ -88,7 +89,8 @@ def bond(isin: str):
     t = state["terms"].get(isin)
     if not t:
         raise HTTPException(404, "ISIN not in universe")
-    return build_view(t, _quotes().get(isin), utcnow(), config.QUOTE_STALE_AFTER_SECONDS, RULES)
+    return build_view(t, _quotes().get(isin), utcnow(), config.QUOTE_STALE_AFTER_SECONDS, RULES,
+                      config.REF_MAX_AGE_DAYS)
 
 
 app.mount("/static", StaticFiles(directory=config.ROOT / "static"), name="static")

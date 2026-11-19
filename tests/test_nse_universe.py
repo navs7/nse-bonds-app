@@ -84,3 +84,12 @@ def test_yield_is_withheld_when_frequency_unknown_or_paid_up_differs(tmp_path):
     assert z.ytm_ltp is None and any("verify outstanding" in n for n in z.notes)
     ok = _terms(tmp_path, {"INE148I07UR1": {"isin": "INE148I07UR1", "coupon_freq": "4"}})
     assert build_view(ok["INE148I07UR1"], q, now, 300).ytm_ltp is not None
+
+
+def test_duplicate_isins_are_refused(tmp_path):
+    rows = [{"isin": "INE1"}, {"isin": "INE2"}, {"isin": "INE1"}]
+    with pytest.raises(ValueError, match="duplicate ISIN"):
+        nu.assert_unique_isins(rows)
+    with pytest.raises(ValueError):
+        nu.write_csv(rows, tmp_path / "x.csv")
+    nu.assert_unique_isins([{"isin": "INE1"}, {"isin": "INE2"}])  # unique list passes

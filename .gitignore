@@ -9,3 +9,4 @@ data/*.db
 wdmlist_*.csv
 Corporate_bond_report_*.csv
 Interest_Payment_Details*.csv
+exports/

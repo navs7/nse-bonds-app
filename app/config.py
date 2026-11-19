@@ -22,4 +22,5 @@ QUOTE_STALE_AFTER_SECONDS = int(os.environ.get("QUOTE_STALE_AFTER_SECONDS", "300
 MIN_YTM = float(os.environ.get("MIN_YTM", "12"))
 MIN_DAYS_LEFT = int(os.environ.get("MIN_DAYS_LEFT", "90"))
 MIN_GROSS_PROFIT = float(os.environ.get("MIN_GROSS_PROFIT", "10000"))
-BONDS_CSV =ROOT / os.environ.get("BONDS_CSV", "data/bonds.csv")
+REF_MAX_AGE_DAYS = int(os.environ.get("REF_MAX_AGE_DAYS", "30"))
+BONDS_CSV = ROOT / os.environ.get("BONDS_CSV", "data/bonds.csv")

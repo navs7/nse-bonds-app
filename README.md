@@ -32,13 +32,15 @@ capital-market bhavcopy (ISIN, close, last, volume; it walks back to the latest 
 The paid WDM `DLYddmmyyyy.zip` bhavcopy is vendor-SFTP-only and is not used.
 
 **What NSE does not give us, and what the app does about it:**
-- *Coupon frequency, rating* are blank. Add them in `data/overrides.csv` (`isin,coupon_freq,rating,face_value`).
-  Until a coupon bond has a frequency, **yield is not computed** (it shows a note) rather than guessed.
-  To fill them in bulk: download NSE's current **Interest Payment Details (.csv)** from the
-  "Securities available for Trading" page on nseindia.com (a normal browser download; it holds issuer-filed frequencies),
-  save it in `data/`, then run `.venv\Scripts\python -m app.sources.frequency_import data\<that file>.csv` and rerun the
-  universe import. Existing overrides are kept; disagreements are printed. The copies on NSE's archive host are
-  2022-2023 snapshots and cover almost no current bonds.
+- *Coupon frequency* is not in `DEBT.csv`. It comes only from NSE's **WDM list** and **Corporate bond report** (both from
+  nseindia.com/all-reports-debt; download them yourself into the project folder). Run
+  `.venv\Scripts\python -m app.sources.frequency_import wdmlist_DDMMYYYY.csv Corporate_bond_report_DD-Mon-YYYY.csv`, then rerun the
+  universe import. Each ISIN's coupon and maturity are cross-checked first; disagreements are recorded as terms conflicts.
+  Until a coupon bond has a frequency, **yield is not computed** (it shows a note) rather than guessed. *Rating* is not in
+  any of these files (the report's rating column is empty); add ratings by hand in `data/overrides.csv`
+  (`isin,coupon_freq,rating,face_value,terms_verified`).
+- *Data sources used, and only these:* NSE `DEBT.csv` and capital-market bhavcopy, Upstox's BSE list and BSE bhavcopy, the
+  NSE WDM list and the NSE Corporate bond report. Hand-built spreadsheets are not used.
 - *Paid-up value differs from face value* (e.g. 94 bonds in the Nov 2026 file): yield is withheld with a note until
   you verify the outstanding value with NSDL/CDSL. Fix it via `face_value` in overrides.
 - Bhavcopy prices are end-of-day references, not live; only bonds that traded that day have one (123 of 1,667 corporate
@@ -60,6 +62,25 @@ Upstox's BSE instrument list (ISIN + a name like `HUDCO-7.64%-8-2-31-TAXFREENCD`
   big subscription may hit Upstox limits). BSE-only streaming uses `BSE_EQ|ISIN` keys once confirmed.
 - Skipped: commercial paper, PTCs, perpetual/reset-rate and zero-coupon names that do not parse, and BSE G-secs/SDLs.
 - The page and API have an exchange filter (`/api/bonds?exchange=BSE`).
+
+## WDM bonds (NSE wholesale debt market)
+
+`DEBT.csv` only covers NSE's capital-market segment. Corporate bonds that trade on the wholesale segment (private
+placements and most debentures) are in NSE's **WDM list**. Download `wdmlist_DDMMYYYY.csv` from nseindia.com into the
+project folder or `data/`; the universe import picks up the newest one automatically (`--wdmlist PATH` to choose,
+`--no-wdm` to skip) and adds the live corporate bonds NSE/BSE don't already provide. Exchange shows as `WDM`.
+
+- Terms (coupon, maturity, frequency) are official, so they count as verified. Face value is set to 100 because WDM
+  prices are per Rs 100; check this for amortising bonds.
+- Most never trade: price 0 / no date means "never traded" and is stored as no price. In the Nov 2026 file only
+  210 of 699 have a last trade, and only 14 were within 30 days.
+- Upstox does not stream WDM, so there is no live bid/ask and **no Invest/Review signal**. The page shows the last
+  traded price, its date, and **YTM @close**, but only if that trade is at most `REF_MAX_AGE_DAYS` (30) old.
+- Skipped: commercial paper, matured, government securities, reset-rate bonds and unreadable coupons.
+
+**YTM @close** also appears for NSE/BSE bonds (from the bhavcopy close). A yield that comes out negative is never shown:
+it means the price is above everything the bond still pays (bad terms, an unknown redemption amount as on cumulative
+bonds, or a price convention problem), and the Notes column says so.
 
 ## Terms conflicts
 

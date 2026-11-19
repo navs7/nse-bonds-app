@@ -49,7 +49,7 @@ def test_wdmlist_detected_and_parsed():
     assert fi.asof_from_filename("wdmlist_18112026.csv") == date(2026, 11, 18)
     freqs, terms = fi.read_wdmlist(WDM, date(2026, 11, 18))
     assert freqs["INE1"][1] == {2} and "INE2" not in freqs and freqs["INE5"][1] == {4}
-    assert terms["INE1"] == (10.04, date(2027, 6, 7))
+    assert terms["INE1"] == (10.04, date(2027, 6, 7), "NSE WDM list")
 
 
 def test_wdmlist_terms_cross_check_skips_wrong_instrument():
@@ -61,17 +61,35 @@ def test_wdmlist_terms_cross_check_skips_wrong_instrument():
 
 
 def test_coupon_rounding_in_debt_csv_is_not_a_mismatch():
-    terms = {"INE1": (7.685, date(2028, 7, 24)), "INE2": (9.71, date(2028, 7, 27))}
+    terms = {"INE1": (7.685, date(2028, 7, 24), "L"), "INE2": (9.71, date(2028, 7, 27), "L"), "INE3": (8.0956, date(2026, 12, 22), "L")}
     bonds = {"INE1": {"coupon_rate": "7.69", "maturity_date": "2028-07-24"},   # 2-dp rounding of 7.685
-             "INE2": {"coupon_rate": "9.17", "maturity_date": "2028-07-27"}}   # real difference (digits swapped)
+             "INE2": {"coupon_rate": "9.17", "maturity_date": "2028-07-27"},   # real difference (digits swapped)
+             "INE3": {"coupon_rate": "8.09", "maturity_date": "2026-12-22"}}   # DEBT.csv truncates 8.0956 to 8.09
     assert fi.terms_mismatches(terms, bonds) == {"INE2"}
 
 
 def test_conflicts_file_names_both_sources(tmp_path):
-    terms = {"INE1": (9.71, date(2028, 7, 27))}
+    terms = {"INE1": (9.71, date(2028, 7, 27), "NSE WDM list")}
     bonds = {"INE1": {"coupon_rate": "9.17", "maturity_date": "2028-07-27", "terms_source": "NSE DEBT.csv"}}
     p = tmp_path / "c.csv"
     fi.write_conflicts(p, {"INE1"}, terms, bonds)
     from app.sources.nse_universe import load_conflicts
     d = load_conflicts(p)["INE1"]
     assert "WDM list says 9.71% maturing 2028-07-27" in d and "NSE DEBT.csv says 9.17%" in d
+
+
+CORP = ("Sectype,Security,Issue Name,Issue Desc,Issuer,Face Value,Credit Rating,Issue Date,Maturity Date,Record Date,"
+        "Step up Coupons,Coupon Frequency,ISIN,Status\n")
+
+
+def test_corporate_bond_report_with_title_lines_is_read_too():
+    text = (",,,National Stock Exchange Of India Limited,,\n,,,Negotiated Trade Reporting Platform,,\n"
+            "Details report for :- 18-Nov-2026,,\n,,\n" + CORP +
+            "AT,AXBK32,7.88%,Axis 7.88% 2032,UTI BANK LIMITED,100.00,,13-Dec-2022,13-Dec-2032,,,Yearly,INE238A08484,Listed\n"
+            "DB,X30,8.0956,X 8.0956% 2030,X LTD,100.00,,01-Jan-2020,01-Jan-2030,,,Quarterly,INE999A07011,Listed\n"
+            "VZ,Z34,0%,ZC 2034,Z TRUST,100.00,,01-Jan-2025,30-Jan-2034,,,0,INE0H7R07066,Listed\n")
+    assert fi.is_wdmlist(text)
+    freqs, terms = fi.read_wdmlist(text, date(2026, 11, 18))
+    assert freqs["INE238A08484"][1] == {1} and freqs["INE999A07011"][1] == {4} and "INE0H7R07066" not in freqs
+    assert terms["INE999A07011"] == (8.0956, date(2030, 1, 1), "NSE corporate bond report")
+    assert fi.asof_from_filename("Corporate_bond_report_18-Nov-2026.csv") == date(2026, 11, 18)
