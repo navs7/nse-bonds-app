@@ -11,9 +11,10 @@
 </style></head><body>
 <h1>NSE Bonds</h1>
 <p><small>Terms: NSE listing files (coupon frequency and rating from manual overrides). Quotes: Upstox stream (broker feed, not an official exchange feed). Yield is computed here from price, coupon, maturity and face value.</small></p>
+<label>Exchange <select id="exch"><option value="">All</option><option>NSE</option><option>BSE</option></select></label>
 <label><input type="checkbox" id="screen"> Screen: Invest / Review only (YTM at ask &ge; 12%, more than 90 days left), highest yield first</label>
 <div class="wrap"><table><thead><tr>
-<th>ISIN</th><th>Name</th><th>Status</th><th>Signal</th><th>LTP</th><th>NSE close</th><th>Best bid</th><th>Best ask</th><th>YTM @ask</th><th>YTM @LTP</th><th>Profit</th><th>Days</th><th>Quote age</th><th>Terms source</th><th>Notes</th>
+<th>ISIN</th><th>Name</th><th>Exch</th><th>Status</th><th>Signal</th><th>LTP</th><th>NSE close</th><th>Best bid</th><th>Best ask</th><th>YTM @ask</th><th>YTM @LTP</th><th>Profit</th><th>Days</th><th>Quote age</th><th>Terms source</th><th>Notes</th>
 </tr></thead><tbody id="rows"></tbody></table></div>
 <script>
 const f=(v,d=2)=>v==null?"-":Number(v).toFixed(d);
@@ -21,18 +22,19 @@ const pct=v=>v==null?"-":Number(v).toFixed(2)+"%";
 const age=s=>s==null?"-":s<90?Math.round(s)+"s":s<5400?Math.round(s/60)+"m":Math.round(s/3600)+"h";
 async function tick(){
   try{
-    const data=await (await fetch(document.getElementById("screen").checked?"/api/bonds?signal=INVEST,REVIEW&sort=ytm":"/api/bonds")).json();
+    const data=await (await fetch("/api/bonds?"+new URLSearchParams(Object.assign({},document.getElementById("screen").checked?{signal:"INVEST,REVIEW",sort:"ytm"}:{},document.getElementById("exch").value?{exchange:document.getElementById("exch").value}:{})))).json();
     const tb=document.getElementById("rows"); tb.replaceChildren();
     for(const b of data){
       const q=b.quote||{}, tr=document.createElement("tr");
-      const cells=[b.terms.isin,b.terms.name,b.status,b.signal||"-",f(q.ltp),f(b.terms.ref_close),f(q.bids&&q.bids[0]&&q.bids[0].price),
+      const cells=[b.terms.isin,b.terms.name,b.terms.exchange+(b.terms.also_on?"+"+b.terms.also_on:""),b.status,b.signal||"-",f(q.ltp),f(b.terms.ref_close),f(q.bids&&q.bids[0]&&q.bids[0].price),
         f(q.asks&&q.asks[0]&&q.asks[0].price),pct(b.ytm_best_ask),pct(b.ytm_ltp),f(b.gross_profit,0),b.days_left==null?"-":b.days_left,age(b.age_seconds),
         (b.terms.terms_source||"-")+(b.terms.terms_as_of?" ("+b.terms.terms_as_of+")":""),(b.notes||[]).join("; ")];
-      cells.forEach((c,i)=>{const td=document.createElement("td");td.textContent=c;if(i==2)td.className=b.status;if(i==3&&b.signal)td.className=b.signal;tr.append(td)});
+      cells.forEach((c,i)=>{const td=document.createElement("td");td.textContent=c;if(i==3)td.className=b.status;if(i==4&&b.signal)td.className=b.signal;tr.append(td)});
       tb.append(tr);
     }
   }catch(e){console.error(e)}
 }
 document.getElementById("screen").addEventListener("change",tick);
+document.getElementById("exch").addEventListener("change",tick);
 tick(); setInterval(tick,3000);
 </script></body></html>

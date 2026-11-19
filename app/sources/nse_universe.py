@@ -31,7 +31,8 @@ MONTHS = {m: i for i, m in enumerate(
     ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], 1)}
 
 OUT_FIELDS = [
-    "isin", "name", "issuer", "series", "category", "coupon_rate", "coupon_freq", "maturity_date",
+    "isin", "name", "issuer", "series", "category", "exchange", "also_on", "terms_verified",
+    "coupon_rate", "coupon_freq", "maturity_date",
     "face_value", "paid_up_value", "rating", "listing_date",
     "ref_close", "ref_last", "ref_volume", "ref_date", "terms_source", "terms_as_of",
 ]
@@ -83,7 +84,12 @@ def parse_debt_master(text: str) -> list[dict]:
 
 def parse_bhavcopy(zip_bytes: bytes) -> dict[str, dict]:
     z = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    rd = csv.DictReader(io.TextIOWrapper(z.open(z.namelist()[0]), encoding="utf-8-sig"))
+    return parse_bhavcopy_text(z.read(z.namelist()[0]).decode("utf-8-sig", errors="replace"))
+
+
+def parse_bhavcopy_text(text: str) -> dict[str, dict]:
+    """NSE and BSE publish the same UDiFF layout, so one parser serves both."""
+    rd = csv.DictReader(io.StringIO(text.lstrip("﻿")))
     need = {"TradDt", "ISIN", "SctySrs", "ClsPric", "LastPric", "TtlTradgVol"}
     if not need <= set(rd.fieldnames or []):
         raise FormatChanged(f"bhavcopy columns changed: {rd.fieldnames}")
@@ -114,7 +120,8 @@ def build_rows(master: Iterable[dict], bhav: dict[str, dict], overrides: dict[st
         ref = bhav.get(m["isin"], {})
         rows.append({
             "isin": m["isin"], "name": m["name"], "issuer": m["name"], "series": m["series"],
-            "category": cat, "coupon_rate": m["coupon_rate"],
+            "category": cat, "exchange": "NSE", "also_on": "", "terms_verified": "yes",
+            "coupon_rate": m["coupon_rate"],
             "coupon_freq": ov.get("coupon_freq", "") or "",
             "maturity_date": m["maturity_date"].isoformat(),
             "face_value": ov.get("face_value") or m["face_value"],
@@ -147,6 +154,29 @@ def fetch_latest_bhavcopy(client, today: date, lookback: int = 7) -> dict[str, d
     raise RuntimeError(f"no bhavcopy found in the last {lookback} days")
 
 
+def add_bse(rows: list[dict], overrides: dict, today: date) -> list[dict]:
+    """Append BSE-only bonds; mark ISINs NSE also lists. Prints parse quality so drift is visible."""
+    import httpx
+
+    from . import bse_universe as bu
+
+    with httpx.Client(timeout=90, follow_redirects=True) as c:
+        raw = c.get(bu.UPSTOX_BSE_URL)
+        raw.raise_for_status()
+        instruments, skipped = bu.parse_instruments(raw.content)
+        bse_bhav = bu.fetch_latest_bse_bhavcopy(c, today)
+    nse_terms = {r["isin"]: r for r in rows}
+    agree, total = bu.agreement_with_nse(instruments, nse_terms)
+    new_rows, stats = bu.build_rows(instruments, bse_bhav, overrides, set(nse_terms), today)
+    for r in rows:
+        if r["isin"] in stats["also_on_nse"]:
+            r["also_on"] = "BSE"
+    print(f"BSE: {len(instruments)} corporate debt scrips parsed ({skipped} skipped: CP/PTC/perpetual/unparsable names); "
+          f"{len(stats['also_on_nse'])} also on NSE; name-parsed coupon+maturity agrees with NSE's official terms on "
+          f"{agree}/{total}; {len(new_rows)} BSE-only added (terms unverified, no yield until confirmed)")
+    return rows + new_rows
+
+
 def main() -> None:
     import httpx
 
@@ -154,6 +184,7 @@ def main() -> None:
     ap.add_argument("--categories", default="corporate", help="comma list: corporate,gsec,sdl,tbill")
     ap.add_argument("--out", default="data/bonds.csv")
     ap.add_argument("--overrides", default="data/overrides.csv")
+    ap.add_argument("--no-bse", action="store_true", help="skip the BSE universe")
     a = ap.parse_args()
     today = date.today()
     with httpx.Client(headers=HEADERS, timeout=60, follow_redirects=True) as c:
@@ -161,8 +192,11 @@ def main() -> None:
         r.raise_for_status()
         master = parse_debt_master(r.text)
         bhav = fetch_latest_bhavcopy(c, today)
-    rows = build_rows(master, bhav, load_overrides(Path(a.overrides)),
-                      {x.strip() for x in a.categories.split(",")}, today)
+    cats = {x.strip() for x in a.categories.split(",")}
+    overrides = load_overrides(Path(a.overrides))
+    rows = build_rows(master, bhav, overrides, cats, today)
+    if not a.no_bse and "corporate" in cats:
+        rows = add_bse(rows, overrides, today)
     write_csv(rows, Path(a.out))
     traded = sum(1 for r in rows if r["ref_close"] != "")
     print(f"{len(master)} debt securities in DEBT.csv -> wrote {len(rows)} to {a.out} "

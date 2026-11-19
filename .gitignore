@@ -5,3 +5,7 @@ __pycache__/
 data/bonds.csv
 data/*.db
 *.log
+# downloaded NSE data files (large, re-downloadable)
+wdmlist_*.csv
+Corporate_bond_report_*.csv
+Interest_Payment_Details*.csv

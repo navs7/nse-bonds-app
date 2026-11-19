@@ -15,8 +15,11 @@ class BondTerms(BaseModel):
     coupon_rate: float  # percent per annum
     coupon_freq: Optional[int] = None  # payments per year; None = unknown (NSE files don't give it)
     maturity_date: date
-    face_value: float  # nominal face value per NSE; override in data/overrides.csv if outstanding differs
+    face_value: Optional[float] = None  # nominal face value per NSE; None = unknown (BSE-only bonds)
     paid_up_value: Optional[float] = None  # NSE paid-up value; differs from face_value => verify
+    exchange: str = "NSE"  # exchange whose instrument key we stream (NSE preferred)
+    also_on: str = ""  # other exchange also listing this ISIN
+    terms_verified: bool = True  # False = coupon/maturity parsed from a BSE name, not an official field
     series: str = ""
     category: str = ""
     rating: str = ""
@@ -30,7 +33,7 @@ class BondTerms(BaseModel):
 
     @property
     def instrument_key(self) -> str:
-        return f"NSE_EQ|{self.isin}"
+        return f"{self.exchange}_EQ|{self.isin}"
 
 
 class Level(BaseModel):

@@ -64,7 +64,7 @@ def total_gain(terms: BondTerms, clean_price: float, settle: Optional[date] = No
     settle = settle or date.today() + timedelta(days=1)
     if clean_price <= 0 or terms.maturity_date <= settle:
         return None
-    if terms.coupon_rate > 0 and not terms.coupon_freq:
+    if terms.coupon_rate > 0 and not terms.coupon_freq or terms.face_value is None:
         return None
     flows, accrued = cashflows(terms, settle)
     return sum(cf for _, cf in flows) - (clean_price + accrued)
@@ -75,6 +75,8 @@ def ytm(terms: BondTerms, clean_price: float, settle: Optional[date] = None) -> 
     settle = settle or date.today() + timedelta(days=1)
     if terms.coupon_rate > 0 and not terms.coupon_freq:
         return None  # never guess payment frequency
+    if terms.face_value is None:
+        return None
     if clean_price <= 0 or terms.maturity_date <= settle:
         return None
     flows, accrued = cashflows(terms, settle)

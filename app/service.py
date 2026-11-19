@@ -32,11 +32,25 @@ def classify(ytm: Optional[float], days_left: int, profit: Optional[float], rule
     return "INVEST" if (profit or 0) > rules.min_profit else "REVIEW"
 
 
+def yield_blocked(terms: BondTerms) -> bool:
+    """True when the terms are too doubtful to compute a yield from (never guess)."""
+    return (
+        terms.face_value is None
+        or not terms.terms_verified
+        or (terms.paid_up_value is not None and terms.paid_up_value != terms.face_value)
+    )
+
+
 def data_notes(terms: BondTerms) -> list[str]:
     notes = []
+    if not terms.terms_verified:
+        notes.append("terms parsed from BSE name, unverified: yield not computed "
+                     "(confirm in data/overrides.csv: terms_verified=yes, face_value=...)")
+    elif terms.face_value is None:
+        notes.append("face value unknown: yield not computed")
     if terms.coupon_rate > 0 and not terms.coupon_freq:
         notes.append("coupon frequency unknown: yield not computed")
-    if terms.paid_up_value is not None and terms.paid_up_value != terms.face_value:
+    if terms.face_value is not None and terms.paid_up_value is not None and terms.paid_up_value != terms.face_value:
         notes.append(f"paid-up {terms.paid_up_value:,.2f} differs from face {terms.face_value:,.2f}: "
                      "verify outstanding value with depository; yield not computed")
     return notes
@@ -60,7 +74,7 @@ def build_view(terms: BondTerms, quote: Optional[Quote], now: datetime, stale_af
     best_bid = quote.bids[0] if quote.bids else None
     base = dict(terms=terms, quote=quote, status=status, age_seconds=round(age, 1),
                 days_left=days_left, notes=notes)
-    if any("verify outstanding" in n for n in notes):
+    if yield_blocked(terms):
         return BondView(**base)
 
     settle = today + timedelta(days=1)

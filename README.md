@@ -45,6 +45,22 @@ The paid WDM `DLYddmmyyyy.zip` bhavcopy is vendor-SFTP-only and is not used.
   bonds on the first run).
 - If NSE changes either file's layout the importer raises `FormatChanged` instead of importing wrong data.
 
+## BSE bonds
+
+The same import (`python -m app.sources.nse_universe`, add `--no-bse` to skip) also adds BSE debt, from two open files:
+Upstox's BSE instrument list (ISIN + a name like `HUDCO-7.64%-8-2-31-TAXFREENCD`) and BSE's daily bhavcopy (prices).
+
+- Bonds listed on both exchanges keep **NSE's official terms**; BSE is shown in `also_on`.
+- **BSE-only bonds are unverified.** Coupon and maturity are parsed from the name. On bonds listed on both exchanges
+  that parse agrees with NSE's official terms 620/636 times; the misses are typos in the BSE name (e.g. 2026 vs 2036).
+  Face value and coupon frequency are not in any open BSE file. So BSE-only bonds show prices but **no yield or
+  signal** until you confirm one in `data/overrides.csv`: set `terms_verified=yes`, `face_value`, and `coupon_freq`
+  after checking the bond's term sheet.
+- Only NSE-listed and confirmed bonds are streamed from Upstox (unverified BSE bonds can't show a yield, and a
+  big subscription may hit Upstox limits). BSE-only streaming uses `BSE_EQ|ISIN` keys once confirmed.
+- Skipped: commercial paper, PTCs, perpetual/reset-rate and zero-coupon names that do not parse, and BSE G-secs/SDLs.
+- The page and API have an exchange filter (`/api/bonds?exchange=BSE`).
+
 ## Daily Upstox login (automated)
 
 Upstox tokens expire every day. `app/upstox_auth.py` logs in with Playwright (mobile + TOTP + PIN), exchanges the

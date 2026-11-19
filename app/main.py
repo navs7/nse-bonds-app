@@ -23,7 +23,10 @@ async def lifespan(app: FastAPI):
     state["terms"] = load_terms(config.BONDS_CSV)
     log.info("loaded %d bonds from %s", len(state["terms"]), config.BONDS_CSV)
     if config.UPSTOX_ACCESS_TOKEN and state["terms"]:
-        live = UpstoxLive(config.UPSTOX_ACCESS_TOKEN, [t.instrument_key for t in state["terms"].values()])
+        # Unverified BSE-only bonds get no yield, so streaming them would only burn the subscription limit.
+        keys = [t.instrument_key for t in state["terms"].values() if t.exchange == "NSE" or t.terms_verified]
+        log.info("streaming %d of %d bonds", len(keys), len(state["terms"]))
+        live = UpstoxLive(config.UPSTOX_ACCESS_TOKEN, keys)
         live.start()
         state["live"] = live
     else:
@@ -54,12 +57,16 @@ def bonds(
     min_ytm: Optional[float] = Query(None, description="only bonds with YTM at best ask >= this (percent)"),
     min_days: Optional[int] = Query(None, description="only bonds with more than this many days left"),
     sort: Optional[str] = Query(None, description="'ytm' = highest YTM at best ask first"),
+    exchange: Optional[str] = Query(None, description="NSE or BSE (includes bonds listed on both)"),
 ):
     quotes, now = _quotes(), utcnow()
     views = [
         build_view(t, quotes.get(isin), now, config.QUOTE_STALE_AFTER_SECONDS, RULES)
         for isin, t in state["terms"].items()
     ]
+    if exchange:
+        ex = exchange.strip().upper()
+        views = [v for v in views if ex in (v.terms.exchange, v.terms.also_on)]
     if signal:
         wanted = {s.strip().upper() for s in signal.split(",")}
         views = [v for v in views if v.signal in wanted]
