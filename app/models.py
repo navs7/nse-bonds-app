@@ -13,10 +13,18 @@ class BondTerms(BaseModel):
     name: str = ""
     issuer: str = ""
     coupon_rate: float  # percent per annum
-    coupon_freq: int  # payments per year (0 = zero coupon)
+    coupon_freq: Optional[int] = None  # payments per year; None = unknown (NSE files don't give it)
     maturity_date: date
-    face_value: float  # CURRENT face value (after any partial redemptions)
+    face_value: float  # nominal face value per NSE; override in data/overrides.csv if outstanding differs
+    paid_up_value: Optional[float] = None  # NSE paid-up value; differs from face_value => verify
+    series: str = ""
+    category: str = ""
     rating: str = ""
+    listing_date: Optional[date] = None
+    ref_close: Optional[float] = None  # last NSE bhavcopy close (end of day reference, not live)
+    ref_last: Optional[float] = None
+    ref_volume: Optional[float] = None
+    ref_date: Optional[date] = None
     terms_source: str = ""
     terms_as_of: Optional[date] = None
 
@@ -52,3 +60,4 @@ class BondView(BaseModel):
     ytm_ltp: Optional[float] = None  # percent
     ytm_best_ask: Optional[float] = None
     ytm_best_bid: Optional[float] = None
+    notes: list[str] = []  # why a value is missing, e.g. unknown coupon frequency

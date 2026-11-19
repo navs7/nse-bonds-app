@@ -27,7 +27,7 @@ def _add_months(d: date, months: int) -> date:
 
 def coupon_dates(terms: BondTerms, settle: date) -> tuple[Optional[date], list[date]]:
     """(previous coupon date, upcoming coupon dates incl. maturity) generated backwards from maturity."""
-    if terms.coupon_freq <= 0:
+    if not terms.coupon_freq:
         return None, [terms.maturity_date]
     step = 12 // terms.coupon_freq
     dates: list[date] = []
@@ -61,6 +61,8 @@ def _pv(flows: list[CashFlow], settle: date, r: float) -> float:
 def ytm(terms: BondTerms, clean_price: float, settle: Optional[date] = None) -> Optional[float]:
     """Yield to maturity in percent for a CLEAN price quoted per bond (same unit as face_value)."""
     settle = settle or date.today() + timedelta(days=1)
+    if terms.coupon_rate > 0 and not terms.coupon_freq:
+        return None  # never guess payment frequency
     if clean_price <= 0 or terms.maturity_date <= settle:
         return None
     flows, accrued = cashflows(terms, settle)

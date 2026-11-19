@@ -8,9 +8,20 @@ from . import yieldcalc
 from .models import BondTerms, BondView, Quote
 
 
+def data_notes(terms: BondTerms) -> list[str]:
+    notes = []
+    if terms.coupon_rate > 0 and not terms.coupon_freq:
+        notes.append("coupon frequency unknown: yield not computed")
+    if terms.paid_up_value is not None and terms.paid_up_value != terms.face_value:
+        notes.append(f"paid-up {terms.paid_up_value:g} differs from face {terms.face_value:g}: "
+                     "verify outstanding value with depository; yield not computed")
+    return notes
+
+
 def build_view(terms: BondTerms, quote: Optional[Quote], now: datetime, stale_after: int) -> BondView:
+    notes = data_notes(terms)
     if quote is None or (quote.ltp is None and not quote.asks and not quote.bids):
-        return BondView(terms=terms, quote=quote, status="NO_QUOTE")
+        return BondView(terms=terms, quote=quote, status="NO_QUOTE", notes=notes)
     # age = time since last trade (informational); status uses time since we last heard from the feed
     ref = quote.last_trade_time or quote.received_at
     age = (now - ref).total_seconds()
@@ -20,6 +31,8 @@ def build_view(terms: BondTerms, quote: Optional[Quote], now: datetime, stale_af
 
     best_ask = quote.asks[0].price if quote.asks else None
     best_bid = quote.bids[0].price if quote.bids else None
+    if any("verify outstanding" in n for n in notes):
+        return BondView(terms=terms, quote=quote, status=status, age_seconds=round(age, 1), notes=notes)
     return BondView(
         terms=terms,
         quote=quote,
@@ -28,6 +41,7 @@ def build_view(terms: BondTerms, quote: Optional[Quote], now: datetime, stale_af
         ytm_ltp=yieldcalc.ytm(terms, quote.ltp) if quote.ltp else None,
         ytm_best_ask=yieldcalc.ytm(terms, best_ask) if best_ask else None,
         ytm_best_bid=yieldcalc.ytm(terms, best_bid) if best_bid else None,
+        notes=notes,
     )
 
 

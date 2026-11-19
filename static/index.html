@@ -10,9 +10,9 @@
  .wrap{overflow-x:auto} .LIVE{color:var(--ok)} .STALE{color:var(--warn)} .NO_QUOTE{color:var(--bad)} small{color:var(--mut)}
 </style></head><body>
 <h1>NSE Bonds</h1>
-<p><small>Terms: SEBI/depository data. Quotes: Upstox stream (broker feed, not an official exchange feed). Yield is computed here from price, coupon, maturity and face value.</small></p>
+<p><small>Terms: NSE listing files (coupon frequency and rating from manual overrides). Quotes: Upstox stream (broker feed, not an official exchange feed). Yield is computed here from price, coupon, maturity and face value.</small></p>
 <div class="wrap"><table><thead><tr>
-<th>ISIN</th><th>Name</th><th>Status</th><th>LTP</th><th>Best bid</th><th>Best ask</th><th>YTM @ask</th><th>YTM @LTP</th><th>Quote age</th><th>Terms source</th>
+<th>ISIN</th><th>Name</th><th>Status</th><th>LTP</th><th>NSE close</th><th>Best bid</th><th>Best ask</th><th>YTM @ask</th><th>YTM @LTP</th><th>Quote age</th><th>Terms source</th><th>Notes</th>
 </tr></thead><tbody id="rows"></tbody></table></div>
 <script>
 const f=(v,d=2)=>v==null?"-":Number(v).toFixed(d);
@@ -24,9 +24,9 @@ async function tick(){
     const tb=document.getElementById("rows"); tb.replaceChildren();
     for(const b of data){
       const q=b.quote||{}, tr=document.createElement("tr");
-      const cells=[b.terms.isin,b.terms.name,b.status,f(q.ltp),f(q.bids&&q.bids[0]&&q.bids[0].price),
+      const cells=[b.terms.isin,b.terms.name,b.status,f(q.ltp),f(b.terms.ref_close),f(q.bids&&q.bids[0]&&q.bids[0].price),
         f(q.asks&&q.asks[0]&&q.asks[0].price),pct(b.ytm_best_ask),pct(b.ytm_ltp),age(b.age_seconds),
-        (b.terms.terms_source||"-")+(b.terms.terms_as_of?" ("+b.terms.terms_as_of+")":"")];
+        (b.terms.terms_source||"-")+(b.terms.terms_as_of?" ("+b.terms.terms_as_of+")":""),(b.notes||[]).join("; ")];
       cells.forEach((c,i)=>{const td=document.createElement("td");td.textContent=c;if(i==2)td.className=b.status;tr.append(td)});
       tb.append(tr);
     }
