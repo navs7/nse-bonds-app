@@ -35,6 +35,7 @@ def parse_feed(instrument_key: str, feed: dict, now: datetime) -> Quote:
             asks.append(Level(price=float(lvl["ap"]), qty=float(lvl["aq"])))
     return Quote(
         isin=instrument_key.split("|", 1)[-1],
+        exchange=instrument_key.split("_EQ|", 1)[0] if "_EQ|" in instrument_key else "NSE",
         ltp=ltpc.get("ltp"),
         last_trade_time=_ms_to_dt(ltpc.get("ltt")),
         bids=bids,
@@ -52,6 +53,7 @@ class UpstoxLive:
         self._streamer = None
 
     def snapshot(self) -> dict[str, Quote]:
+        """Latest quote per instrument key, e.g. 'NSE_EQ|INE...' and 'BSE_EQ|INE...'."""
         with self._lock:
             return dict(self._quotes)
 
@@ -64,7 +66,7 @@ class UpstoxLive:
                 log.exception("bad feed for %s", key)
                 continue
             with self._lock:
-                self._quotes[q.isin] = q
+                self._quotes[q.key] = q
 
     def start(self) -> None:
         import upstox_client

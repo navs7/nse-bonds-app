@@ -67,7 +67,7 @@ def _wdm_term(tmp_path, ref_date):
     rows = wu.build_rows(parsed, {}, set(), TODAY, "NSE WDM list x.csv")
     p = tmp_path / "b.csv"
     nu.write_csv(rows, p)
-    return load_terms(p)["INE053F09EO6"]
+    return load_terms(p)["WDM_EQ|INE053F09EO6"]
 
 
 def test_wdm_bond_is_not_streamed_and_reference_yield_needs_a_recent_trade(tmp_path):

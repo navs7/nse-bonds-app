@@ -9,7 +9,7 @@ Every layer has one job and one source. Nothing is shown without saying where it
 | Layer | Data | Source | Module |
 |---|---|---|---|
 | 1. Universe | Which bonds are listed | NSE `DEBT.csv` + daily capital-market bhavcopy (both free, public) | `app/sources/nse_universe.py` |
-| 2. Terms | Coupon, maturity, face/paid-up value | NSE `DEBT.csv`; frequency and rating from `data/overrides.csv` (SEBI/depository data) | `nse_universe.py`, `terms_csv.py` |
+| 2. Terms | Coupon, maturity, face/paid-up value | NSE `DEBT.csv`, WDM list and corporate bond report, cross-checked per field | `reconcile.py`, `nse_universe.py` |
 | 3. Live quotes | LTP, 5-level bid/ask | Upstox stream (broker feed) | `app/sources/upstox_live.py` |
 | 4. Computed | YTM from price + terms | This app (`app/yieldcalc.py`) | `app/service.py` |
 
@@ -18,7 +18,7 @@ Stale or missing quotes are never shown as live.
 
 **Known limits:** Upstox is not an official exchange data product, and no free official live feed
 exists. For production, replace layer 3 with NSE Data & Analytics' corporate-bond feed (same
-`Quote` model). Layers 1-2 come from NSE's free files; coupon frequency, rating and outstanding face value have no confirmed public API yet, so they come from `data/overrides.csv`.
+`Quote` model). Layers 1-2 come from NSE's free files; rating and outstanding face value have no permitted source yet, so they stay blank unless you add them in `data/overrides.csv`.
 
 ## Importing the universe
 
@@ -32,13 +32,11 @@ capital-market bhavcopy (ISIN, close, last, volume; it walks back to the latest 
 The paid WDM `DLYddmmyyyy.zip` bhavcopy is vendor-SFTP-only and is not used.
 
 **What NSE does not give us, and what the app does about it:**
-- *Coupon frequency* is not in `DEBT.csv`. It comes only from NSE's **WDM list** and **Corporate bond report** (both from
-  nseindia.com/all-reports-debt; download them yourself into the project folder). Run
-  `.venv\Scripts\python -m app.sources.frequency_import wdmlist_DDMMYYYY.csv Corporate_bond_report_DD-Mon-YYYY.csv`, then rerun the
-  universe import. Each ISIN's coupon and maturity are cross-checked first; disagreements are recorded as terms conflicts.
+- *Coupon frequency* is not in `DEBT.csv`; it comes from NSE's **WDM list** and **Corporate bond report** (the corporate report is now downloaded automatically from nsearchives.nseindia.com on each import, `--no-download` to skip; the WDM list has no known public URL, so download it from
+  nseindia.com/all-reports-debt into the project folder; the import picks up the newest of each). See "Fields and sources" below.
   Until a coupon bond has a frequency, **yield is not computed** (it shows a note) rather than guessed. *Rating* is not in
-  any of these files (the report's rating column is empty); add ratings by hand in `data/overrides.csv`
-  (`isin,coupon_freq,rating,face_value,terms_verified`).
+  any permitted file (the report's rating column is empty); add ratings by hand in `data/overrides.csv`
+  (`isin,coupon_freq,rating,face_value,terms_verified`), which always wins over the sources.
 - *Data sources used, and only these:* NSE `DEBT.csv` and capital-market bhavcopy, Upstox's BSE list and BSE bhavcopy, the
   NSE WDM list and the NSE Corporate bond report. Hand-built spreadsheets are not used.
 - *Paid-up value differs from face value* (e.g. 94 bonds in the Nov 2026 file): yield is withheld with a note until
@@ -52,11 +50,12 @@ The paid WDM `DLYddmmyyyy.zip` bhavcopy is vendor-SFTP-only and is not used.
 The same import (`python -m app.sources.nse_universe`, add `--no-bse` to skip) also adds BSE debt, from two open files:
 Upstox's BSE instrument list (ISIN + a name like `HUDCO-7.64%-8-2-31-TAXFREENCD`) and BSE's daily bhavcopy (prices).
 
-- Bonds listed on both exchanges keep **NSE's official terms**; BSE is shown in `also_on`.
+- A bond listed on both exchanges gets **one row per exchange** (same ISIN, an NSE row and a BSE row, side by side). The
+  BSE row carries NSE's official terms and BSE's own price. Uniqueness is on ISIN + exchange, never ISIN alone.
 - **BSE-only bonds are unverified.** Coupon and maturity are parsed from the name. On bonds listed on both exchanges
   that parse agrees with NSE's official terms 620/636 times; the misses are typos in the BSE name (e.g. 2026 vs 2036).
   Face value and coupon frequency are not in any open BSE file. So BSE-only bonds show prices but **no yield or
-  signal** until you confirm one in `data/overrides.csv`: set `terms_verified=yes`, `face_value`, and `coupon_freq`
+  signal** until it is confirmed: an official NSE list covering the ISIN verifies it automatically, or set `terms_verified=yes`, `face_value`, and `coupon_freq` in `data/overrides.csv`
   after checking the bond's term sheet.
 - Only NSE-listed and confirmed bonds are streamed from Upstox (unverified BSE bonds can't show a yield, and a
   big subscription may hit Upstox limits). BSE-only streaming uses `BSE_EQ|ISIN` keys once confirmed.
@@ -82,13 +81,26 @@ project folder or `data/`; the universe import picks up the newest one automatic
 it means the price is above everything the bond still pays (bad terms, an unknown redemption amount as on cumulative
 bonds, or a price convention problem), and the Notes column says so.
 
-## Terms conflicts
+## Fields and sources (per ISIN + exchange)
 
-When you run `frequency_import` with an NSE WDM list, every bond whose coupon or maturity there contradicts what we hold
-is written to `data/term_conflicts.csv`, and the next universe import carries it into `bonds.csv`. Those bonds get a red
-**TERMS CONFLICT** note naming both sources, and no yield or signal until you check the term sheet. On the page, tick
-"Only terms conflicts" (API: `/api/bonds?conflicts=true`) to list them. A conflict is either two NSE files disagreeing, or
-a BSE-only bond whose name-parsed terms differ from the WDM list (a typo in the BSE name; the WDM list is the official one).
+Every row carries **symbol, trading symbol, coupon rate, maturity, coupon frequency and rating**, each cross-checked against every
+permitted source by `app/sources/reconcile.py`:
+
+| Field | Sources |
+|---|---|
+| Symbol | NSE `DEBT.csv`, exchange bhavcopy (traded symbol), Upstox list; for WDM rows the WDM list and corporate report |
+| Trading symbol | Upstox NSE / BSE instrument list (WDM is not tradable there, so blank) |
+| Coupon rate | corporate bond report, WDM list, `DEBT.csv` (official), Upstox name (supporting) |
+| Maturity | corporate bond report, WDM list, `DEBT.csv` (official), Upstox BSE name (supporting) |
+| Coupon frequency | corporate bond report, WDM list |
+| Rating | corporate bond report (empty in practice) - otherwise blank |
+
+Per field the page's **Field checks** column and `data/source_values.csv` (what every source says) show a status:
+`agree(n)`, `single`, `supporting differs` (an official value exists but an Upstox name differs: usually a typo in the name),
+`CONFLICT` (the official NSE sources disagree: red note, no yield until checked) or `none`. The most precise official value wins
+(e.g. 8.0956 over `DEBT.csv`'s 8.09). A bond is **verified** when an official source gives its coupon and maturity without a
+conflict, so BSE-only bonds are confirmed automatically when an NSE list covers them. List conflicts with "Only terms conflicts"
+(API: `/api/bonds?conflicts=true`). The Excel export has 'Source values', 'Field coverage' and 'Sources used' sheets.
 
 ## Daily Upstox login (automated)
 
@@ -133,7 +145,7 @@ bonds need the current face value in the CSV and (not yet built) an amortisation
 
 ## Next steps
 
-1. Fill `data/overrides.csv` (coupon frequency, rating, outstanding face value) from Bond Central / depository data.
+1. Add ratings and outstanding face values (no permitted source has them) in `data/overrides.csv`.
 2. Add BSE's debt list to cover bonds NSE does not list.
 3. Automate the daily Upstox token (port the Playwright login from the old repo; keep secrets in `.env`).
 4. Add amortisation schedules; ask NSE Data & Analytics about the official corporate-bond feed.

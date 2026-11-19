@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 DEBT_URL = "https://nsearchives.nseindia.com/content/equities/DEBT.csv"
+CORP_URL = "https://nsearchives.nseindia.com/content/debt/Corporate_bond_report_{d}.csv"  # d = 18-Nov-2026
 BHAV_URL = "https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{ymd}_F_0000.csv.zip"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
@@ -35,10 +36,10 @@ MONTHS = {m: i for i, m in enumerate(
     ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], 1)}
 
 OUT_FIELDS = [
-    "isin", "name", "issuer", "series", "category", "exchange", "also_on", "terms_verified",
+    "isin", "name", "issuer", "symbol", "trading_symbol", "series", "category", "exchange", "terms_verified",
     "coupon_rate", "coupon_freq", "maturity_date",
     "face_value", "paid_up_value", "rating", "listing_date",
-    "ref_close", "ref_last", "ref_volume", "ref_date", "terms_source", "terms_as_of", "terms_conflict",
+    "ref_close", "ref_last", "ref_volume", "ref_date", "terms_source", "terms_as_of", "terms_conflict", "checks",
 ]
 
 
@@ -101,6 +102,7 @@ def parse_bhavcopy_text(text: str) -> dict[str, dict]:
         r["ISIN"].strip(): {
             "ref_close": _num(r["ClsPric"]), "ref_last": _num(r["LastPric"]),
             "ref_volume": _num(r["TtlTradgVol"]), "ref_date": r["TradDt"].strip(),
+            "symbol": (r.get("TckrSymb") or "").strip(), "series": (r.get("SctySrs") or "").strip(),
         }
         for r in rd
     }
@@ -113,14 +115,6 @@ def load_overrides(path: Path) -> dict[str, dict]:
         return {r["isin"].strip().upper(): r for r in csv.DictReader(f)}
 
 
-def load_conflicts(path: Path) -> dict[str, str]:
-    """data/term_conflicts.csv (written by frequency_import): ISINs whose coupon/maturity two sources disagree on."""
-    if not path.exists():
-        return {}
-    with path.open(newline="", encoding="utf-8-sig") as f:
-        return {r["isin"].strip().upper(): r["detail"] for r in csv.DictReader(f)}
-
-
 def build_rows(master: Iterable[dict], bhav: dict[str, dict], overrides: dict[str, dict],
                categories: set[str], today: date) -> list[dict]:
     rows = []
@@ -131,8 +125,8 @@ def build_rows(master: Iterable[dict], bhav: dict[str, dict], overrides: dict[st
         ov = overrides.get(m["isin"], {})
         ref = bhav.get(m["isin"], {})
         rows.append({
-            "isin": m["isin"], "name": m["name"], "issuer": m["name"], "series": m["series"],
-            "category": cat, "exchange": "NSE", "also_on": "", "terms_verified": "yes",
+            "isin": m["isin"], "name": m["name"], "issuer": m["name"], "symbol": m["symbol"], "series": m["series"],
+            "category": cat, "exchange": "NSE", "terms_verified": "yes",
             "coupon_rate": m["coupon_rate"],
             "coupon_freq": ov.get("coupon_freq", "") or "",
             "maturity_date": m["maturity_date"].isoformat(),
@@ -148,18 +142,19 @@ def build_rows(master: Iterable[dict], bhav: dict[str, dict], overrides: dict[st
     return sorted(rows, key=lambda r: (r["category"], r["name"], r["maturity_date"]))
 
 
-def assert_unique_isins(rows: list[dict]) -> None:
-    """A duplicate ISIN would be silently merged by the loader (last row wins), so refuse to write one."""
-    seen: dict[str, int] = {}
+def assert_unique_keys(rows: list[dict]) -> None:
+    """The same ISIN may appear once per exchange (NSE and BSE rows), but never twice on the SAME exchange."""
+    seen: dict[tuple, int] = {}
     for r in rows:
-        seen[r["isin"]] = seen.get(r["isin"], 0) + 1
-    dups = sorted(i for i, n in seen.items() if n > 1)
+        k = (r["isin"], r.get("exchange", ""))
+        seen[k] = seen.get(k, 0) + 1
+    dups = sorted(k for k, n in seen.items() if n > 1)
     if dups:
-        raise ValueError(f"{len(dups)} duplicate ISIN(s) in the universe, e.g. {dups[:5]}")
+        raise ValueError(f"{len(dups)} duplicate ISIN+exchange row(s) in the universe, e.g. {dups[:5]}")
 
 
 def write_csv(rows: list[dict], path: Path) -> None:
-    assert_unique_isins(rows)
+    assert_unique_keys(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=OUT_FIELDS)
@@ -177,7 +172,7 @@ def fetch_latest_bhavcopy(client, today: date, lookback: int = 7) -> dict[str, d
     raise RuntimeError(f"no bhavcopy found in the last {lookback} days")
 
 
-def add_bse(rows: list[dict], overrides: dict, today: date) -> list[dict]:
+def add_bse(rows: list[dict], overrides: dict, today: date, ctx: dict) -> list[dict]:
     """Append BSE-only bonds; mark ISINs NSE also lists. Prints parse quality so drift is visible."""
     import httpx
 
@@ -192,15 +187,17 @@ def add_bse(rows: list[dict], overrides: dict, today: date) -> list[dict]:
         except (RuntimeError, httpx.HTTPError) as e:  # prices are a bonus: never lose the universe over them
             print(f"WARNING: BSE prices unavailable this run ({e}); BSE bonds will have no close price. Rerun later to add them.")
             bse_bhav = {}
+    ctx["bse_bhav"] = bse_bhav
+    ctx["upx_bse"] = {x["isin"]: x for x in instruments}
     nse_terms = {r["isin"]: r for r in rows}
     agree, total = bu.agreement_with_nse(instruments, nse_terms)
     new_rows, stats = bu.build_rows(instruments, bse_bhav, overrides, set(nse_terms), today)
-    for r in rows:
-        if r["isin"] in stats["also_on_nse"]:
-            r["also_on"] = "BSE"
+    shared = stats["shared_with_nse"]
+    rows = bu.with_bse_rows_for_shared(rows, shared, bse_bhav)  # a second row, right after the NSE one
     print(f"BSE: {len(instruments)} corporate debt scrips parsed ({skipped} skipped: CP/PTC/perpetual/unparsable names); "
-          f"{len(stats['also_on_nse'])} also on NSE; name-parsed coupon+maturity agrees with NSE's official terms on "
-          f"{agree}/{total}; {len(new_rows)} BSE-only added (terms unverified, no yield until confirmed)")
+          f"{len(shared)} NSE bonds are also listed on BSE and get their own BSE row (NSE terms, BSE price); "
+          f"name-parsed coupon+maturity agrees with NSE's official terms on {agree}/{total}; "
+          f"{len(new_rows)} BSE-only added (terms unverified, no yield until confirmed)")
     return rows + new_rows
 
 
@@ -221,16 +218,42 @@ def add_wdm(rows: list[dict], overrides: dict, today: date, path: Optional[Path]
     return rows + new
 
 
+def download_corporate_report(c, today: date, dest: Path, tries: int = 10) -> Optional[Path]:
+    """NSE's public Corporate bond report from the archive host (same plain download as DEBT.csv); newest date wins."""
+    from . import reconcile as rc
+    for back in range(tries):
+        d = today - timedelta(days=back)
+        name = f"Corporate_bond_report_{d.strftime('%d-%b-%Y')}.csv"
+        try:
+            r = c.get(CORP_URL.format(d=d.strftime("%d-%b-%Y")))
+        except httpx.HTTPError:
+            continue
+        if r.status_code != 200:
+            continue
+        try:
+            rc.parse_nse_list(r.text)  # must have the expected layout, else it is an error page
+        except FormatChanged:
+            continue
+        dest.mkdir(exist_ok=True)
+        (dest / name).write_text(r.text, encoding="utf-8")
+        return dest / name
+    return None
+
+
 def main() -> None:
     import httpx
+
+    from . import reconcile as rc  # imported here: reconcile itself imports this module
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--categories", default="corporate", help="comma list: corporate,gsec,sdl,tbill")
     ap.add_argument("--out", default="data/bonds.csv")
     ap.add_argument("--overrides", default="data/overrides.csv")
-    ap.add_argument("--conflicts", default="data/term_conflicts.csv")
+    ap.add_argument("--evidence", default="data/source_values.csv", help="where each source's value per field is written")
     ap.add_argument("--no-bse", action="store_true", help="skip the BSE universe")
     ap.add_argument("--wdmlist", default=None, help="NSE WDM list CSV (default: newest wdmlist_*.csv in . or data/)")
+    ap.add_argument("--wdm-url", default=None, help="URL template for the WDM list, e.g. https://.../wdmlist_{ddmmyyyy}.csv (none public known: otherwise the file you download is used)")
+    ap.add_argument("--no-download", action="store_true", help="do not fetch the NSE corporate bond report online; use local files only")
     ap.add_argument("--no-wdm", action="store_true", help="skip WDM-only bonds")
     a = ap.parse_args()
     today = date.today()
@@ -239,16 +262,51 @@ def main() -> None:
         r.raise_for_status()
         master = parse_debt_master(r.text)
         bhav = fetch_latest_bhavcopy(c, today)
+        ctx: dict = {"nse_bhav": bhav, "debt": {m["isin"]: {"symbol": m["symbol"], "coupon": m["coupon_rate"],
+                                                           "maturity": m["maturity_date"]} for m in master}}
+        try:  # Upstox's NSE instrument list: the trading symbol and descriptive name of each NSE bond
+            up = c.get(rc.UPSTOX_NSE_URL)
+            up.raise_for_status()
+            ctx["upx_nse"] = rc.index_upstox_nse(up.content)
+        except (httpx.HTTPError, rc.FormatChanged) as e:
+            print(f"WARNING: Upstox NSE list unavailable ({e}); NSE trading symbols will be missing this run.")
+        if not a.no_download:
+            got = download_corporate_report(c, today, Path("data"))
+            print(f"Corporate bond report: downloaded {got.name}" if got else
+                  "Corporate bond report: online download failed; using a local copy if present")
+            if a.wdm_url:
+                for back in range(10):
+                    d = today - timedelta(days=back)
+                    try:
+                        w = c.get(a.wdm_url.format(ddmmyyyy=d.strftime("%d%m%Y"), d=d.strftime("%d-%b-%Y")))
+                        if w.status_code == 200:
+                            rc.parse_nse_list(w.text)
+                            Path("data").mkdir(exist_ok=True)
+                            (Path("data") / f"wdmlist_{d.strftime('%d%m%Y')}.csv").write_text(w.text, encoding="utf-8")
+                            print(f"WDM list: downloaded wdmlist_{d.strftime('%d%m%Y')}.csv")
+                            break
+                    except (httpx.HTTPError, FormatChanged, rc.FormatChanged):
+                        continue
     cats = {x.strip() for x in a.categories.split(",")}
     overrides = load_overrides(Path(a.overrides))
     rows = build_rows(master, bhav, overrides, cats, today)
     if not a.no_bse and "corporate" in cats:
-        rows = add_bse(rows, overrides, today)
+        rows = add_bse(rows, overrides, today, ctx)
     if not a.no_wdm and "corporate" in cats:
         rows = add_wdm(rows, overrides, today, Path(a.wdmlist) if a.wdmlist else None)
-    conflicts = load_conflicts(Path(a.conflicts))
-    for r in rows:
-        r["terms_conflict"] = conflicts.get(r["isin"], "")
+    here = [Path("."), Path("data")]
+    for key, pat in (("wdm", "wdmlist_*.csv"), ("corp", "Corporate_bond_report_*.csv")):
+        f = Path(a.wdmlist) if (key == "wdm" and a.wdmlist) else rc.find_newest(pat, *here)
+        ctx[key] = rc.parse_nse_list(f.read_text(encoding="utf-8-sig", errors="replace")) if f else {}
+        print(f"{'WDM list' if key == 'wdm' else 'Corporate bond report'}: {f.name if f else 'not found (download it from nseindia.com/all-reports-debt)'}"
+              f"{f' ({len(ctx[key])} ISINs)' if f else ''}")
+    rows, evidence, stats = rc.reconcile_rows(rows, ctx, overrides, today)
+    rc.write_evidence(evidence, Path(a.evidence))
+    for ex in ("NSE", "BSE", "WDM"):
+        for fld in rc.FIELDS:
+            parts = {k[2]: v for k, v in stats.items() if k[0] == ex and k[1] == fld}
+            if parts:
+                print(f"  {ex:3} {fld:15} " + ", ".join(f"{s} {n}" for s, n in sorted(parts.items(), key=lambda kv: -kv[1])))
     write_csv(rows, Path(a.out))
     traded = sum(1 for r in rows if r["ref_close"] != "")
     print(f"{len(master)} debt securities in DEBT.csv -> wrote {len(rows)} to {a.out} "

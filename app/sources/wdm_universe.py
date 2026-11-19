@@ -118,7 +118,7 @@ def build_rows(parsed: list[dict], overrides: dict[str, dict], existing: set[str
         freq = (ov.get("coupon_freq") or "").strip() or (str(x["freq"]) if x["freq"] else "")
         rows.append({
             "isin": x["isin"], "name": x["name"], "issuer": x["name"], "series": x["sectype"],
-            "category": "corporate", "exchange": "WDM", "also_on": "", "terms_verified": "yes",
+            "category": "corporate", "exchange": "WDM", "terms_verified": "yes",
             "coupon_rate": x["coupon_rate"], "coupon_freq": freq,
             "maturity_date": x["maturity_date"].isoformat(),
             "face_value": (ov.get("face_value") or "").strip() or 100, "paid_up_value": "",

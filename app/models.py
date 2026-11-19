@@ -17,10 +17,12 @@ class BondTerms(BaseModel):
     maturity_date: date
     face_value: Optional[float] = None  # nominal face value per NSE; None = unknown (BSE-only bonds)
     paid_up_value: Optional[float] = None  # NSE paid-up value; differs from face_value => verify
-    exchange: str = "NSE"  # exchange whose instrument key we stream (NSE preferred)
-    also_on: str = ""  # other exchange also listing this ISIN
+    exchange: str = "NSE"  # one row per exchange: a bond on NSE and BSE has two rows (same ISIN)
     terms_verified: bool = True  # False = coupon/maturity parsed from a BSE name, not an official field
     series: str = ""
+    symbol: str = ""  # the exchange's symbol / scrip id
+    trading_symbol: str = ""  # Upstox instrument symbol (blank for WDM: not tradable there)
+    checks: str = ""  # per-field source agreement, e.g. "coupon agree(3) | maturity agree(2) | ..."
     category: str = ""
     rating: str = ""
     listing_date: Optional[date] = None
@@ -57,6 +59,11 @@ class Quote(BaseModel):
     asks: list[Level] = []
     received_at: datetime
     source: str = "upstox"
+    exchange: str = "NSE"
+
+    @property
+    def key(self) -> str:
+        return f"{self.exchange}_EQ|{self.isin}"
 
 
 class BondView(BaseModel):

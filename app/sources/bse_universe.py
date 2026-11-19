@@ -10,7 +10,7 @@ HONEST LIMITS - read before trusting the output:
     So BSE-only rows are marked terms_verified=no and get NO yield or signal until you confirm them
     in data/overrides.csv (terms_verified=yes, face_value=...).
   * Face value is not in either file. Coupon frequency and rating are not either.
-  * Bonds also listed on NSE keep NSE's official terms; BSE is only recorded in `also_on`.
+  * A bond also listed on NSE gets its own BSE row carrying NSE's official terms (verified) and BSE's price.
   * Only INE-ISIN corporate debt with a parsable "<coupon>%" name is imported. Commercial paper,
     PTCs, perpetual/reset-rate and zero-coupon names that do not parse are skipped and counted.
 """
@@ -63,17 +63,19 @@ def parse_instruments(raw_gz: bytes) -> tuple[list[dict], int]:
             skipped += 1
             continue
         out.append({"isin": isin, "name": x["name"].strip(), "issuer": p[0],
-                    "coupon_rate": p[1], "maturity_date": p[2]})
+                    "coupon_rate": p[1], "maturity_date": p[2],
+                    "trading_symbol": (x.get("trading_symbol") or "").strip(), "coupon": p[1],
+                    "token": x.get("exchange_token")})
     return out, skipped
 
 
 def build_rows(instruments: list[dict], bhav: dict[str, dict], overrides: dict[str, dict],
                nse_isins: set[str], today: date) -> tuple[list[dict], dict]:
     """BSE-only rows (ISINs NSE already lists are skipped) plus quality stats."""
-    rows, also_on = [], set()
+    rows, shared = [], set()
     for x in instruments:
         if x["isin"] in nse_isins:
-            also_on.add(x["isin"])
+            shared.add(x["isin"])
             continue
         if x["maturity_date"] <= today:
             continue
@@ -82,7 +84,7 @@ def build_rows(instruments: list[dict], bhav: dict[str, dict], overrides: dict[s
         verified = (ov.get("terms_verified") or "").strip().lower() == "yes"
         rows.append({
             "isin": x["isin"], "name": x["name"], "issuer": x["issuer"], "series": "", "category": "corporate",
-            "exchange": "BSE", "also_on": "", "terms_verified": "yes" if verified else "no",
+            "exchange": "BSE", "terms_verified": "yes" if verified else "no",
             "coupon_rate": x["coupon_rate"], "coupon_freq": ov.get("coupon_freq", "") or "",
             "maturity_date": x["maturity_date"].isoformat(),
             "face_value": ov.get("face_value", "") or "", "paid_up_value": "",
@@ -92,7 +94,26 @@ def build_rows(instruments: list[dict], bhav: dict[str, dict], overrides: dict[s
             "terms_source": "Upstox BSE list, parsed from name" + (" + overrides" if ov else ""),
             "terms_as_of": today.isoformat(),
         })
-    return rows, {"also_on_nse": also_on}
+    return rows, {"shared_with_nse": shared}
+
+
+def with_bse_rows_for_shared(nse_rows: list[dict], shared: set[str], bse_bhav: dict[str, dict]) -> list[dict]:
+    """Insert a BSE row right after the NSE row of every ISIN that BSE also lists.
+    Terms are NSE's official ones; the price/date are BSE's own. No merged "NSE+BSE" label anywhere."""
+    out: list[dict] = []
+    for r in nse_rows:
+        out.append(r)
+        if r["isin"] in shared:
+            ref = bse_bhav.get(r["isin"], {})
+            b = dict(r)
+            b.update({
+                "exchange": "BSE", "series": "",
+                "ref_close": ref.get("ref_close", ""), "ref_last": ref.get("ref_last", ""),
+                "ref_volume": ref.get("ref_volume", ""), "ref_date": ref.get("ref_date", ""),
+                "terms_source": r["terms_source"] + " (same ISIN listed on BSE; BSE price)",
+            })
+            out.append(b)
+    return out
 
 
 def agreement_with_nse(instruments: list[dict], nse_terms: dict[str, dict]) -> tuple[int, int]:

@@ -57,18 +57,18 @@ def bonds(
     min_ytm: Optional[float] = Query(None, description="only bonds with YTM at best ask >= this (percent)"),
     min_days: Optional[int] = Query(None, description="only bonds with more than this many days left"),
     sort: Optional[str] = Query(None, description="'ytm' = highest YTM at best ask first"),
-    exchange: Optional[str] = Query(None, description="NSE or BSE (includes bonds listed on both)"),
+    exchange: Optional[str] = Query(None, description="NSE, BSE or WDM (a bond on both NSE and BSE has a row for each)"),
     conflicts: Optional[bool] = Query(None, description="true = only bonds whose sources disagree on coupon/maturity"),
 ):
     quotes, now = _quotes(), utcnow()
     views = [
-        build_view(t, quotes.get(isin), now, config.QUOTE_STALE_AFTER_SECONDS, RULES,
+        build_view(t, quotes.get(key), now, config.QUOTE_STALE_AFTER_SECONDS, RULES,
                    config.REF_MAX_AGE_DAYS)
-        for isin, t in state["terms"].items()
+        for key, t in state["terms"].items()
     ]
     if exchange:
         ex = exchange.strip().upper()
-        views = [v for v in views if ex in (v.terms.exchange, v.terms.also_on)]
+        views = [v for v in views if v.terms.exchange == ex]
     if conflicts:
         views = [v for v in views if v.terms.terms_conflict]
     if signal:
@@ -83,14 +83,16 @@ def bonds(
     return views
 
 
-@app.get("/api/bonds/{isin}", response_model=BondView)
+@app.get("/api/bonds/{isin}", response_model=list[BondView])
 def bond(isin: str):
+    """All rows for an ISIN: one per exchange it is listed on (NSE, BSE and/or WDM)."""
     isin = isin.upper()
-    t = state["terms"].get(isin)
-    if not t:
+    quotes, now = _quotes(), utcnow()
+    views = [build_view(t, quotes.get(key), now, config.QUOTE_STALE_AFTER_SECONDS, RULES, config.REF_MAX_AGE_DAYS)
+             for key, t in state["terms"].items() if t.isin == isin]
+    if not views:
         raise HTTPException(404, "ISIN not in universe")
-    return build_view(t, _quotes().get(isin), utcnow(), config.QUOTE_STALE_AFTER_SECONDS, RULES,
-                      config.REF_MAX_AGE_DAYS)
+    return views
 
 
 app.mount("/static", StaticFiles(directory=config.ROOT / "static"), name="static")

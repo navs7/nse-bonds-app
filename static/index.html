@@ -39,7 +39,13 @@ const bid1=b=>b.quote&&b.quote.bids&&b.quote.bids[0]&&b.quote.bids[0].price;
 const cols=[
  {h:"ISIN",t:"text",v:b=>b.terms.isin},
  {h:"Name",t:"text",v:b=>b.terms.name},
- {h:"Exch",t:"set",v:b=>b.terms.exchange+(b.terms.also_on?"+"+b.terms.also_on:"")},
+ {h:"Exch",t:"set",v:b=>b.terms.exchange},
+ {h:"Symbol",t:"text",v:b=>b.terms.symbol||"-"},
+ {h:"Trading symbol",t:"text",v:b=>b.terms.trading_symbol||"-"},
+ {h:"Coupon %",t:"num",v:b=>num(b.terms.coupon_rate),show:v=>v==null?"-":String(v)},
+ {h:"Maturity",t:"text",v:b=>b.terms.maturity_date||"-"},
+ {h:"Freq / yr",t:"num",v:b=>num(b.terms.coupon_freq),show:v=>v==null?"-":String(v)},
+ {h:"Rating",t:"text",v:b=>b.terms.rating||"-"},
  {h:"Status",t:"set",v:b=>b.status,cls:b=>b.status},
  {h:"Signal",t:"set",v:b=>b.signal||"-",cls:b=>b.signal||""},
  {h:"LTP",t:"num",v:b=>num(b.quote&&b.quote.ltp),show:v=>f(v)},
@@ -55,6 +61,7 @@ const cols=[
  {h:"Face",t:"num",v:b=>num(b.terms.face_value),show:v=>f(v,0)},
  {h:"Paid-up",t:"num",v:b=>num(b.terms.paid_up_value),show:v=>f(v,2)},
  {h:"Quote age",t:"num",v:b=>num(b.age_seconds),show:age},
+ {h:"Field checks",t:"text",v:b=>b.terms.checks||"-"},
  {h:"Terms source",t:"text",v:b=>(b.terms.terms_source||"-")+(b.terms.terms_as_of?" ("+b.terms.terms_as_of+")":"")},
  {h:"Notes",t:"text",v:b=>(b.notes||[]).join("; "),cls:b=>b.terms.terms_conflict?"CHECK":""},
 ];

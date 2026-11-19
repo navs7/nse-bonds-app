@@ -31,7 +31,7 @@ def load_terms(path: Path) -> dict[str, BondTerms]:
     with path.open(newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             isin = row["isin"].strip().upper()
-            out[isin] = BondTerms(
+            t = BondTerms(
                 isin=isin,
                 name=row.get("name", "").strip(),
                 issuer=row.get("issuer", "").strip(),
@@ -40,10 +40,12 @@ def load_terms(path: Path) -> dict[str, BondTerms]:
                 maturity_date=date.fromisoformat(row["maturity_date"]),
                 face_value=_f(row.get("face_value")),
                 exchange=(row.get("exchange") or "NSE").strip(),
-                also_on=(row.get("also_on") or "").strip(),
                 terms_verified=(row.get("terms_verified") or "yes").strip().lower() != "no",
                 paid_up_value=_f(row.get("paid_up_value")),
                 series=row.get("series", "").strip(),
+                symbol=(row.get("symbol") or "").strip(),
+                trading_symbol=(row.get("trading_symbol") or "").strip(),
+                checks=(row.get("checks") or "").strip(),
                 category=row.get("category", "").strip(),
                 rating=row.get("rating", "").strip(),
                 listing_date=_d(row.get("listing_date")),
@@ -55,4 +57,7 @@ def load_terms(path: Path) -> dict[str, BondTerms]:
                 terms_as_of=_d(row.get("terms_as_of")),
                 terms_conflict=(row.get("terms_conflict") or "").strip(),
             )
+            if t.instrument_key in out:
+                raise ValueError(f"duplicate row for {t.instrument_key} in {path}")
+            out[t.instrument_key] = t
     return out

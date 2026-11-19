@@ -62,7 +62,7 @@ def test_overrides_supply_frequency_and_rating(tmp_path):
     assert r["coupon_freq"] == "4" and r["rating"] == "AA" and "overrides" in r["terms_source"]
     p = tmp_path / "b.csv"
     nu.write_csv([r], p)
-    t = load_terms(p)["INE148I07UR1"]
+    t = load_terms(p)["NSE_EQ|INE148I07UR1"]
     assert t.coupon_freq == 4 and t.rating == "AA" and t.ref_close is None
 
 
@@ -78,18 +78,19 @@ def test_yield_is_withheld_when_frequency_unknown_or_paid_up_differs(tmp_path):
     terms = _terms(tmp_path, {})
     now = datetime(2026, 11, 19, tzinfo=timezone.utc)
     q = Quote(isin="x", ltp=1000, asks=[Level(price=1000, qty=1)], received_at=now)
-    v = build_view(terms["INE148I07UR1"], q, now, 300)
+    v = build_view(terms["NSE_EQ|INE148I07UR1"], q, now, 300)
     assert v.ytm_ltp is None and "frequency unknown" in v.notes[0]
-    z = build_view(terms["INE957N07880"], q, now, 300)  # paid-up 51780 vs face 100000
+    z = build_view(terms["NSE_EQ|INE957N07880"], q, now, 300)  # paid-up 51780 vs face 100000
     assert z.ytm_ltp is None and any("verify outstanding" in n for n in z.notes)
     ok = _terms(tmp_path, {"INE148I07UR1": {"isin": "INE148I07UR1", "coupon_freq": "4"}})
-    assert build_view(ok["INE148I07UR1"], q, now, 300).ytm_ltp is not None
+    assert build_view(ok["NSE_EQ|INE148I07UR1"], q, now, 300).ytm_ltp is not None
 
 
-def test_duplicate_isins_are_refused(tmp_path):
-    rows = [{"isin": "INE1"}, {"isin": "INE2"}, {"isin": "INE1"}]
+def test_same_isin_on_two_exchanges_is_allowed_but_not_twice_on_one(tmp_path):
+    ok = [{"isin": "INE1", "exchange": "NSE"}, {"isin": "INE1", "exchange": "BSE"}, {"isin": "INE2", "exchange": "NSE"}]
+    nu.assert_unique_keys(ok)  # one row per exchange is the design
+    bad = ok + [{"isin": "INE1", "exchange": "BSE"}]
     with pytest.raises(ValueError, match="duplicate ISIN"):
-        nu.assert_unique_isins(rows)
+        nu.assert_unique_keys(bad)
     with pytest.raises(ValueError):
-        nu.write_csv(rows, tmp_path / "x.csv")
-    nu.assert_unique_isins([{"isin": "INE1"}, {"isin": "INE2"}])  # unique list passes
+        nu.write_csv(bad, tmp_path / "x.csv")
