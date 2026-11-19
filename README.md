@@ -40,6 +40,19 @@ The paid WDM `DLYddmmyyyy.zip` bhavcopy is vendor-SFTP-only and is not used.
   bonds on the first run).
 - If NSE changes either file's layout the importer raises `FormatChanged` instead of importing wrong data.
 
+## Daily Upstox login (automated)
+
+Upstox tokens expire every day. `app/upstox_auth.py` logs in with Playwright (mobile + TOTP + PIN), exchanges the
+code for a token and saves it to `.env`. A token that still works is reused, so it only logs in when needed.
+
+One-time setup:
+1. Put `UPSTOX_API_KEY`, `UPSTOX_API_SECRET`, `UPSTOX_MOBILE`, `UPSTOX_PIN`, `UPSTOX_TOTP_KEY` in `.env`
+   (see `.env.example`; `UPSTOX_REDIRECT_URI` must match your Upstox app). They stay in `.env`, which is git-ignored.
+2. `.venv\Scripts\python -m playwright install chromium`
+
+Then each day: `.\start.ps1` (refreshes token and bond list, then starts the app), or just the login with
+`.venv\Scripts\python -m app.upstox_auth` (`--force` to log in again regardless).
+
 ## Run
 
 ```powershell
