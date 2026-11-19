@@ -1,0 +1,2 @@
+isin,name,issuer,coupon_rate,coupon_freq,maturity_date,face_value,rating,terms_source,terms_as_of
+INE000000000,EXAMPLE ROW - REPLACE WITH REAL DATA,Example Ltd,9.50,2,2030-03-31,1000,AA,SEBI/Depository database,2026-01-01
