@@ -65,3 +65,13 @@ def test_coupon_rounding_in_debt_csv_is_not_a_mismatch():
     bonds = {"INE1": {"coupon_rate": "7.69", "maturity_date": "2028-07-24"},   # 2-dp rounding of 7.685
              "INE2": {"coupon_rate": "9.17", "maturity_date": "2028-07-27"}}   # real difference (digits swapped)
     assert fi.terms_mismatches(terms, bonds) == {"INE2"}
+
+
+def test_conflicts_file_names_both_sources(tmp_path):
+    terms = {"INE1": (9.71, date(2028, 7, 27))}
+    bonds = {"INE1": {"coupon_rate": "9.17", "maturity_date": "2028-07-27", "terms_source": "NSE DEBT.csv"}}
+    p = tmp_path / "c.csv"
+    fi.write_conflicts(p, {"INE1"}, terms, bonds)
+    from app.sources.nse_universe import load_conflicts
+    d = load_conflicts(p)["INE1"]
+    assert "WDM list says 9.71% maturing 2028-07-27" in d and "NSE DEBT.csv says 9.17%" in d

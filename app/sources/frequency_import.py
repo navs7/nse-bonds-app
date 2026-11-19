@@ -110,6 +110,22 @@ def terms_mismatches(terms: dict, bonds: dict[str, dict]) -> set[str]:
     return bad
 
 
+def conflict_detail(isin: str, wdm_terms: dict, bonds: dict[str, dict]) -> str:
+    c, m = wdm_terms[isin]
+    b = bonds[isin]
+    return (f"NSE WDM list says {c if c is not None else '?'}% maturing {m or '?'}; "
+            f"{b.get('terms_source') or 'our data'} says {b['coupon_rate']}% maturing {b['maturity_date']}")
+
+
+def write_conflicts(path: Path, suspect: set[str], wdm_terms: dict, bonds: dict[str, dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["isin", "detail"])
+        for isin in sorted(suspect):
+            w.writerow([isin, conflict_detail(isin, wdm_terms, bonds)])
+
+
 def merge(filings: dict, coupon_isins: set[str], overrides: dict[str, dict], replace: bool):
     added, conflicts, disagree = {}, [], []
     for isin, (_, freqs) in filings.items():
@@ -135,6 +151,8 @@ def main() -> None:
     ap.add_argument("files", nargs="+")
     ap.add_argument("--bonds", default="data/bonds.csv")
     ap.add_argument("--overrides", default="data/overrides.csv")
+    ap.add_argument("--conflicts", default="data/term_conflicts.csv",
+                    help="where bonds whose terms conflict with the WDM list are recorded (shown on the page)")
     ap.add_argument("--replace", action="store_true", help="overwrite existing values that disagree")
     a = ap.parse_args()
 
@@ -165,6 +183,8 @@ def main() -> None:
     suspect = terms_mismatches(wdm_terms, bonds)
     for isin in suspect:
         filings.pop(isin, None)
+    if wdm_terms:  # only a WDM-list run can (re)decide which bonds conflict
+        write_conflicts(Path(a.conflicts), suspect, wdm_terms, bonds)
 
     added, conflicts, disagree = merge(filings, coupon_isins, overrides, a.replace)
     for isin, f in added.items():

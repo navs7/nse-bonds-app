@@ -2,39 +2,149 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NSE Bonds</title>
 <style>
- :root{--bg:#fff;--fg:#1a1a1a;--mut:#666;--line:#ddd;--ok:#0a7d33;--warn:#b26a00;--bad:#888}
- @media (prefers-color-scheme:dark){:root{--bg:#161616;--fg:#eee;--mut:#999;--line:#333;--ok:#4cc27a;--warn:#e0a040;--bad:#888}}
+ :root{--bg:#fff;--fg:#1a1a1a;--mut:#666;--line:#ddd;--head:#f3f3f3;--ok:#0a7d33;--warn:#b26a00;--bad:#888;--err:#d33}
+ @media (prefers-color-scheme:dark){:root{--bg:#161616;--fg:#eee;--mut:#999;--line:#333;--head:#222;--ok:#4cc27a;--warn:#e0a040;--bad:#888;--err:#ff6b6b}}
  body{font:14px system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:16px}
- table{border-collapse:collapse;width:100%} th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
- th:nth-child(-n+2),td:nth-child(-n+2){text-align:left}
- .wrap{overflow-x:auto} .INVEST{color:var(--ok);font-weight:700} .REVIEW{color:var(--warn)} .CHECK{color:#d33} .LIVE{color:var(--ok)} .STALE{color:var(--warn)} .NO_QUOTE{color:var(--bad)} small{color:var(--mut)}
+ .bar{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin:6px 0}
+ .wrap{overflow:auto;max-height:78vh;border:1px solid var(--line)}
+ table{border-collapse:separate;border-spacing:0;width:100%}
+ th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+ th{background:var(--head);position:sticky;z-index:1}
+ thead tr:nth-child(1) th{top:0} thead tr:nth-child(2) th{top:var(--h1,30px)}
+ th.l,td.l{text-align:left}
+ .f{width:100%;min-width:62px;box-sizing:border-box;font:12px system-ui,sans-serif;padding:2px 4px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:3px}
+ .f.bad{border-color:var(--err);outline:1px solid var(--err)}
+ .INVEST{color:var(--ok);font-weight:700} .REVIEW{color:var(--warn)} .CHECK{color:var(--err)} .LIVE{color:var(--ok)} .STALE{color:var(--warn)} .NO_QUOTE{color:var(--bad)}
+ small,#count{color:var(--mut)} button{font:12px system-ui,sans-serif}
 </style></head><body>
 <h1>NSE Bonds</h1>
 <p><small>Terms: NSE listing files (coupon frequency and rating from manual overrides). Quotes: Upstox stream (broker feed, not an official exchange feed). Yield is computed here from price, coupon, maturity and face value.</small></p>
-<label>Exchange <select id="exch"><option value="">All</option><option>NSE</option><option>BSE</option></select></label>
-<label><input type="checkbox" id="screen"> Screen: Invest / Review only (YTM at ask &ge; 12%, more than 90 days left), highest yield first</label>
-<div class="wrap"><table><thead><tr>
-<th>ISIN</th><th>Name</th><th>Exch</th><th>Status</th><th>Signal</th><th>LTP</th><th>NSE close</th><th>Best bid</th><th>Best ask</th><th>YTM @ask</th><th>YTM @LTP</th><th>Profit</th><th>Days</th><th>Quote age</th><th>Terms source</th><th>Notes</th>
-</tr></thead><tbody id="rows"></tbody></table></div>
+<div class="bar">
+ <label>Exchange <select id="exch"><option value="">All</option><option>NSE</option><option>BSE</option></select></label>
+ <label><input type="checkbox" id="conf"> Only terms conflicts (sources disagree)</label>
+ <label><input type="checkbox" id="screen"> Screen: Invest / Review only (YTM at ask &ge; 12%, more than 90 days left), highest yield first</label>
+</div>
+<div class="bar"><span id="count"></span> <button id="clear" type="button">Clear column filters</button>
+ <small>Column filters: text = contains; number = <code>&gt;12</code> <code>&lt;=5</code> <code>=0</code> <code>10-20</code>, or <code>-</code> for blank.</small></div>
+<div class="wrap"><table><thead><tr id="h1"></tr><tr id="h2"></tr></thead><tbody id="rows"></tbody></table></div>
 <script>
 const f=(v,d=2)=>v==null?"-":Number(v).toFixed(d);
 const pct=v=>v==null?"-":Number(v).toFixed(2)+"%";
 const age=s=>s==null?"-":s<90?Math.round(s)+"s":s<5400?Math.round(s/60)+"m":Math.round(s/3600)+"h";
+const num=v=>v==null?null:Number(v);
+const ask1=b=>b.quote&&b.quote.asks&&b.quote.asks[0]&&b.quote.asks[0].price;
+const bid1=b=>b.quote&&b.quote.bids&&b.quote.bids[0]&&b.quote.bids[0].price;
+// t: text (contains) | set (dropdown of distinct values) | num (expression). v = value filtered on; show = text displayed.
+const cols=[
+ {h:"ISIN",t:"text",v:b=>b.terms.isin},
+ {h:"Name",t:"text",v:b=>b.terms.name},
+ {h:"Exch",t:"set",v:b=>b.terms.exchange+(b.terms.also_on?"+"+b.terms.also_on:"")},
+ {h:"Status",t:"set",v:b=>b.status,cls:b=>b.status},
+ {h:"Signal",t:"set",v:b=>b.signal||"-",cls:b=>b.signal||""},
+ {h:"LTP",t:"num",v:b=>num(b.quote&&b.quote.ltp),show:v=>f(v)},
+ {h:"NSE close",t:"num",v:b=>num(b.terms.ref_close),show:v=>f(v)},
+ {h:"Best bid",t:"num",v:b=>num(bid1(b)),show:v=>f(v)},
+ {h:"Best ask",t:"num",v:b=>num(ask1(b)),show:v=>f(v)},
+ {h:"YTM @ask",t:"num",v:b=>num(b.ytm_best_ask),show:pct},
+ {h:"YTM @LTP",t:"num",v:b=>num(b.ytm_ltp),show:pct},
+ {h:"Profit",t:"num",v:b=>num(b.gross_profit),show:v=>f(v,0)},
+ {h:"Days",t:"num",v:b=>num(b.days_left),show:v=>v==null?"-":v},
+ {h:"Quote age",t:"num",v:b=>num(b.age_seconds),show:age},
+ {h:"Terms source",t:"text",v:b=>(b.terms.terms_source||"-")+(b.terms.terms_as_of?" ("+b.terms.terms_as_of+")":"")},
+ {h:"Notes",t:"text",v:b=>(b.notes||[]).join("; "),cls:b=>b.terms.terms_conflict?"CHECK":""},
+];
+const text=cols.map(()=>"");          // current filter text per column
+const preds=cols.map(()=>null);       // compiled numeric predicates
+const inputs=[];
+let data=[];
+
+// ---- numeric filter expressions: >12  >=5  <100  <=5  =0  10-20  -(blank) ----
+const N="(-?\\d+(?:\\.\\d+)?)";
+function compileNum(expr){
+  expr=expr.trim();
+  if(!expr) return {ok:true,fn:null};
+  if(expr==="-") return {ok:true,fn:v=>v==null};
+  let m=expr.match(new RegExp("^(>=|<=|>|<|=)?\\s*"+N+"$"));
+  if(m){const op=m[1]||"=",x=parseFloat(m[2]);
+    const t={">":v=>v>x,">=":v=>v>=x,"<":v=>v<x,"<=":v=>v<=x,"=":v=>Math.abs(v-x)<1e-9}[op];
+    return {ok:true,fn:v=>v!=null&&t(v)};}
+  m=expr.match(new RegExp("^"+N+"\\s*(?:-|\\.\\.)\\s*"+N+"$"));
+  if(m){const a=parseFloat(m[1]),b=parseFloat(m[2]),lo=Math.min(a,b),hi=Math.max(a,b);
+    return {ok:true,fn:v=>v!=null&&v>=lo&&v<=hi};}
+  return {ok:false,fn:null};
+}
+
+function passes(b){
+  for(let i=0;i<cols.length;i++){
+    const t=text[i]; if(!t) continue;
+    const c=cols[i], v=c.v(b);
+    if(c.t==="text"){ if(!String(v).toLowerCase().includes(t.toLowerCase())) return false; }
+    else if(c.t==="set"){ if(String(v)!==t) return false; }
+    else { const p=preds[i]; if(p&&p.ok&&p.fn&&!p.fn(v)) return false; }
+  }
+  return true;
+}
+
+function render(){
+  const shown=data.filter(passes), tb=document.getElementById("rows"), frag=document.createDocumentFragment();
+  for(const b of shown){
+    const tr=document.createElement("tr");
+    cols.forEach((c,i)=>{
+      const td=document.createElement("td"), v=c.v(b);
+      td.textContent=c.show?c.show(v):v;
+      if(c.t!=="num") td.className="l";
+      const k=c.cls&&c.cls(b); if(k) td.classList.add(k);
+      tr.append(td);
+    });
+    frag.append(tr);
+  }
+  tb.replaceChildren(frag);
+  document.getElementById("count").textContent="Showing "+shown.length.toLocaleString()+" of "+data.length.toLocaleString()+" bonds";
+}
+
+// ---- header + filter row (built once, so typed filters survive the 3s refresh) ----
+function build(){
+  const h1=document.getElementById("h1"), h2=document.getElementById("h2");
+  cols.forEach((c,i)=>{
+    const th=document.createElement("th"); th.textContent=c.h; if(c.t!=="num") th.className="l"; h1.append(th);
+    const th2=document.createElement("th"); if(c.t!=="num") th2.className="l";
+    let el;
+    if(c.t==="set"){ el=document.createElement("select"); el.append(new Option("All","")); }
+    else { el=document.createElement("input"); el.type="text"; el.placeholder=c.t==="num"?">12":"contains"; }
+    el.className="f"; el.setAttribute("aria-label","Filter "+c.h);
+    let timer;
+    const apply=()=>{ text[i]=el.value; if(c.t==="num"){preds[i]=compileNum(el.value); el.classList.toggle("bad",!preds[i].ok);} render(); };
+    el.addEventListener(c.t==="set"?"change":"input",()=>{clearTimeout(timer); timer=setTimeout(apply,c.t==="set"?0:150);});
+    th2.append(el); h2.append(th2); inputs[i]=el;
+  });
+  document.documentElement.style.setProperty("--h1",h1.getBoundingClientRect().height+"px");
+  document.getElementById("clear").addEventListener("click",()=>{
+    inputs.forEach((el,i)=>{el.value="";text[i]="";preds[i]=null;el.classList.remove("bad");}); render();
+  });
+}
+
+function refreshSetOptions(){
+  cols.forEach((c,i)=>{
+    if(c.t!=="set") return;
+    const vals=[...new Set(data.map(c.v))].sort(), el=inputs[i];
+    const have=[...el.options].slice(1).map(o=>o.value);
+    if(vals.length===have.length&&vals.every((x,j)=>x===have[j])) return;
+    const keep=el.value; el.length=1;
+    const all=new Set(vals); if(keep) all.add(keep);          // never drop the user's current selection
+    [...all].sort().forEach(x=>el.append(new Option(x,x))); el.value=keep;
+  });
+}
+
 async function tick(){
   try{
-    const data=await (await fetch("/api/bonds?"+new URLSearchParams(Object.assign({},document.getElementById("screen").checked?{signal:"INVEST,REVIEW",sort:"ytm"}:{},document.getElementById("exch").value?{exchange:document.getElementById("exch").value}:{})))).json();
-    const tb=document.getElementById("rows"); tb.replaceChildren();
-    for(const b of data){
-      const q=b.quote||{}, tr=document.createElement("tr");
-      const cells=[b.terms.isin,b.terms.name,b.terms.exchange+(b.terms.also_on?"+"+b.terms.also_on:""),b.status,b.signal||"-",f(q.ltp),f(b.terms.ref_close),f(q.bids&&q.bids[0]&&q.bids[0].price),
-        f(q.asks&&q.asks[0]&&q.asks[0].price),pct(b.ytm_best_ask),pct(b.ytm_ltp),f(b.gross_profit,0),b.days_left==null?"-":b.days_left,age(b.age_seconds),
-        (b.terms.terms_source||"-")+(b.terms.terms_as_of?" ("+b.terms.terms_as_of+")":""),(b.notes||[]).join("; ")];
-      cells.forEach((c,i)=>{const td=document.createElement("td");td.textContent=c;if(i==3)td.className=b.status;if(i==4&&b.signal)td.className=b.signal;tr.append(td)});
-      tb.append(tr);
-    }
+    const q=new URLSearchParams();
+    if(document.getElementById("screen").checked){q.set("signal","INVEST,REVIEW");q.set("sort","ytm");}
+    if(document.getElementById("exch").value) q.set("exchange",document.getElementById("exch").value);
+    if(document.getElementById("conf").checked) q.set("conflicts","true");
+    data=await (await fetch("/api/bonds?"+q)).json();
+    refreshSetOptions(); render();
   }catch(e){console.error(e)}
 }
-document.getElementById("screen").addEventListener("change",tick);
-document.getElementById("exch").addEventListener("change",tick);
-tick(); setInterval(tick,3000);
+["screen","exch","conf"].forEach(id=>document.getElementById(id).addEventListener("change",tick));
+build(); tick(); setInterval(tick,3000);
 </script></body></html>

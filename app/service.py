@@ -37,12 +37,15 @@ def yield_blocked(terms: BondTerms) -> bool:
     return (
         terms.face_value is None
         or not terms.terms_verified
+        or bool(terms.terms_conflict)
         or (terms.paid_up_value is not None and terms.paid_up_value != terms.face_value)
     )
 
 
 def data_notes(terms: BondTerms) -> list[str]:
     notes = []
+    if terms.terms_conflict:
+        notes.append(f"TERMS CONFLICT - {terms.terms_conflict}: yield not computed until checked against the term sheet")
     if not terms.terms_verified:
         notes.append("terms parsed from BSE name, unverified: yield not computed "
                      "(confirm in data/overrides.csv: terms_verified=yes, face_value=...)")

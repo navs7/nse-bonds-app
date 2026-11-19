@@ -53,5 +53,6 @@ def load_terms(path: Path) -> dict[str, BondTerms]:
                 ref_date=_d(row.get("ref_date")),
                 terms_source=row.get("terms_source", "").strip(),
                 terms_as_of=_d(row.get("terms_as_of")),
+                terms_conflict=(row.get("terms_conflict") or "").strip(),
             )
     return out

@@ -34,7 +34,7 @@ OUT_FIELDS = [
     "isin", "name", "issuer", "series", "category", "exchange", "also_on", "terms_verified",
     "coupon_rate", "coupon_freq", "maturity_date",
     "face_value", "paid_up_value", "rating", "listing_date",
-    "ref_close", "ref_last", "ref_volume", "ref_date", "terms_source", "terms_as_of",
+    "ref_close", "ref_last", "ref_volume", "ref_date", "terms_source", "terms_as_of", "terms_conflict",
 ]
 
 
@@ -107,6 +107,14 @@ def load_overrides(path: Path) -> dict[str, dict]:
         return {}
     with path.open(newline="", encoding="utf-8-sig") as f:
         return {r["isin"].strip().upper(): r for r in csv.DictReader(f)}
+
+
+def load_conflicts(path: Path) -> dict[str, str]:
+    """data/term_conflicts.csv (written by frequency_import): ISINs whose coupon/maturity two sources disagree on."""
+    if not path.exists():
+        return {}
+    with path.open(newline="", encoding="utf-8-sig") as f:
+        return {r["isin"].strip().upper(): r["detail"] for r in csv.DictReader(f)}
 
 
 def build_rows(master: Iterable[dict], bhav: dict[str, dict], overrides: dict[str, dict],
@@ -184,6 +192,7 @@ def main() -> None:
     ap.add_argument("--categories", default="corporate", help="comma list: corporate,gsec,sdl,tbill")
     ap.add_argument("--out", default="data/bonds.csv")
     ap.add_argument("--overrides", default="data/overrides.csv")
+    ap.add_argument("--conflicts", default="data/term_conflicts.csv")
     ap.add_argument("--no-bse", action="store_true", help="skip the BSE universe")
     a = ap.parse_args()
     today = date.today()
@@ -197,6 +206,9 @@ def main() -> None:
     rows = build_rows(master, bhav, overrides, cats, today)
     if not a.no_bse and "corporate" in cats:
         rows = add_bse(rows, overrides, today)
+    conflicts = load_conflicts(Path(a.conflicts))
+    for r in rows:
+        r["terms_conflict"] = conflicts.get(r["isin"], "")
     write_csv(rows, Path(a.out))
     traded = sum(1 for r in rows if r["ref_close"] != "")
     print(f"{len(master)} debt securities in DEBT.csv -> wrote {len(rows)} to {a.out} "

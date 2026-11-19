@@ -61,6 +61,14 @@ Upstox's BSE instrument list (ISIN + a name like `HUDCO-7.64%-8-2-31-TAXFREENCD`
 - Skipped: commercial paper, PTCs, perpetual/reset-rate and zero-coupon names that do not parse, and BSE G-secs/SDLs.
 - The page and API have an exchange filter (`/api/bonds?exchange=BSE`).
 
+## Terms conflicts
+
+When you run `frequency_import` with an NSE WDM list, every bond whose coupon or maturity there contradicts what we hold
+is written to `data/term_conflicts.csv`, and the next universe import carries it into `bonds.csv`. Those bonds get a red
+**TERMS CONFLICT** note naming both sources, and no yield or signal until you check the term sheet. On the page, tick
+"Only terms conflicts" (API: `/api/bonds?conflicts=true`) to list them. A conflict is either two NSE files disagreeing, or
+a BSE-only bond whose name-parsed terms differ from the WDM list (a typo in the BSE name; the WDM list is the official one).
+
 ## Daily Upstox login (automated)
 
 Upstox tokens expire every day. `app/upstox_auth.py` logs in with Playwright (mobile + TOTP + PIN), exchanges the

@@ -84,3 +84,11 @@ def test_view_gets_signal_and_profit_only_when_live():
 def test_no_signal_without_frequency():
     v = _live_view(800.0, 100, coupon_freq=None)
     assert v.signal is None and v.gross_profit is None
+
+
+def test_terms_conflict_is_flagged_and_blocks_yield_and_signal():
+    t = terms(maturity_date=date(2029, 1, 1), terms_conflict="WDM list says 9.7%; DEBT.csv says 9.1%")
+    q = Quote(isin=t.isin, ltp=800, asks=[Level(price=800, qty=100)], received_at=NOW - timedelta(seconds=10))
+    v = build_view(t, q, NOW, 300, R)
+    assert v.status == "LIVE" and v.signal is None and v.ytm_best_ask is None
+    assert v.notes[0].startswith("TERMS CONFLICT") and "9.7%" in v.notes[0]

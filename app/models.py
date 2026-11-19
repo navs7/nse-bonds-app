@@ -30,6 +30,7 @@ class BondTerms(BaseModel):
     ref_date: Optional[date] = None
     terms_source: str = ""
     terms_as_of: Optional[date] = None
+    terms_conflict: str = ""  # non-empty = two sources disagree on this bond's coupon/maturity
 
     @property
     def instrument_key(self) -> str:

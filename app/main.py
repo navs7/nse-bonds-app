@@ -58,6 +58,7 @@ def bonds(
     min_days: Optional[int] = Query(None, description="only bonds with more than this many days left"),
     sort: Optional[str] = Query(None, description="'ytm' = highest YTM at best ask first"),
     exchange: Optional[str] = Query(None, description="NSE or BSE (includes bonds listed on both)"),
+    conflicts: Optional[bool] = Query(None, description="true = only bonds whose sources disagree on coupon/maturity"),
 ):
     quotes, now = _quotes(), utcnow()
     views = [
@@ -67,6 +68,8 @@ def bonds(
     if exchange:
         ex = exchange.strip().upper()
         views = [v for v in views if ex in (v.terms.exchange, v.terms.also_on)]
+    if conflicts:
+        views = [v for v in views if v.terms.terms_conflict]
     if signal:
         wanted = {s.strip().upper() for s in signal.split(",")}
         views = [v for v in views if v.signal in wanted]
